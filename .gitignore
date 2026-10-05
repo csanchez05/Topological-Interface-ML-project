@@ -1,0 +1,37 @@
+# Data, records and figures live outside git (CLAUDE.md section 7.7)
+/calculations/
+/structures/
+/results/
+/archive/
+/plots/
+/verification/
+
+# Python environments, runtimes, caches and third-party checkouts
+src/*/.venv/
+src/*/.bootstrap/
+src/*/.cache/
+src/*/.tmp/
+src/*/.python-runtime/
+src/*/.julia-runtime/
+src/*/.julia-depot/
+src/*/source/
+src/*/models/
+src/third_party/
+__pycache__/
+*.pyc
+setup.log
+install.log
+
+# Large binaries
+*.npz
+*.npy
+*.h5
+*.pt
+*.pth
+*.pkl
+*.tar
+*.tar.gz
+*.zip
+
+# Local tool state
+/.claude/
