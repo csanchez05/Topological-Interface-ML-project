@@ -1,0 +1,24 @@
+# make_vasp_inputs.py v0.1.0 (git GOLDEN) family=CoGe_100_GB stage=convergence-nonsoc
+SYSTEM = CoGe B20 [100] GB convergence
+PREC = Accurate
+ENCUT = 500
+EDIFF = 1E-6
+ALGO = Normal
+NELM = 100
+ISMEAR = 1
+SIGMA = 0.05
+IBRION = -1
+NSW = 0
+ISPIN = 2
+MAGMOM = 64*1.0 64*0.0
+LWAVE = .FALSE.
+LCHARG = .FALSE.
+BANDGAP = KPOINT
+ISTART = 0
+ICHARG = 2
+ISYM = 2
+KPAR = 4
+NCORE = 4
+NBANDS = 512
+LREAL = .FALSE.
+LMAXMIX = 4

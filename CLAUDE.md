@@ -2,9 +2,9 @@
 
 B20 CoGe. Fixed-geometry VASP on the 1,541 transformed bulk cells (planes 100/110/111), a catalogue
 of 1,541 grain-boundary (GB) sym folders × 9 thicknesses = **13,868 usable GB POSCARs**, and the SOAP →
-KRR / PCA / UMAP search for unusual interface spin textures. There is **no git repository yet**: an
-empty `.git/` folder exists, so tools may report a repo, but every `git` command fails. Back up any
-file before editing it (originals go to `archive/`).
+KRR / PCA / UMAP search for unusual interface spin textures. Git (since 2026-10-05) tracks code only
+(`.gitignore` excludes `calculations/ structures/ results/ archive/ plots/`); so far only `CLAUDE.md`
+and `src/vasp_inputs/` are committed. Back up any file before editing it (originals go to `archive/`).
 
 ## 1. Working agreement
 
@@ -119,16 +119,27 @@ Bulk status (details in `calculations/CoGe_Bulk/README.md`):
 | CoGe_110 | 543 | 543 | 497 (46 only reached the probe) | not run |
 | CoGe_111 | 375 | sym00000 only | none | not run |
 
-**GB / interface VASP settings are not decided. Ask; do not invent or copy bulk values silently.**
-Open questions:
-- relaxation: ISIF (fixed or variable cell), IBRION, EDIFFG, NSW, selective dynamics
-- ENCUT for relaxations (Pulay stress if the cell relaxes)
-- k-mesh for the elongated supercells
-- LASPH
-- MAGMOM start and SAXIS for the GB SOC runs
-- NBANDS
-- how to treat the overlapping atoms of the unrelaxed cells (1,047 families have a pair < 1.5 Å, the smallest 0.07 Å)
-- which of the 162 selected GBs (section 5, Stage 2) get run first
+**GB / interface VASP settings.** Decided for the [100] GBs (user, 2026-10-05; details in
+`notes/interface_100_convergence_20261005.md`):
+- Scope: the 66 [100] 8x cells of the Stage 2 list (`results/dscribe/total_sample_list.csv`). Static,
+  no relaxation. Overlapping atoms are run as-is, with the closest pair recorded (33 of 66 have a pair
+  < 1.5 Å; the worst is 0.77 Å).
+- ISMEAR 1, SIGMA 0.05 eV for scf, dos and bands, with no −5 probe. EDIFF 1E-6 for the convergence
+  sweep, 1E-8 for production. LASPH off, as in bulk.
+- Convergence sweep first (recipe `CoGe_100_GB` / `convergence-nonsoc`, section 7), non-SOC, 16 ranks:
+  - structures sym00431, sym00144, sym00485 and sym00177
+  - ENCUT 350–600 eV at Γ 1×9×9
+  - Γ 1×N×N (N = 3–11) at 500 eV; kx stays 1 along the 74 Å axis
+  - The references are 600 eV and N = 11, so the sweep shows convergence *towards* them, not of them.
+- The production ENCUT and k-mesh come from the sweep; the user confirms them.
+
+Everything else is **not decided. Ask; do not invent or copy bulk values silently.** Open questions:
+- relaxation, if ever: ISIF, IBRION, EDIFFG, NSW, selective dynamics, ENCUT (Pulay stress)
+- MAGMOM start and SAXIS for the GB SOC runs (bulk SAXIS `0 0 1` is an in-plane axis of the GB cell)
+- NBANDS for production, dos and bands; the dos mesh; the band path (the bulk cP1 path is invalid here)
+- Stage 2 E_GB needs a bulk ε at the same ISMEAR, ENCUT and k-density. The finished bulk runs
+  (ISMEAR −1, 600 eV) are not that reference.
+- the 110/111 GBs: all of the above, plus whether they too stay unrelaxed
 
 The 5 template sets in `structures/CoGeGrainBoundaries/CoGe_100_GBs/Interface/` (sym00010 at 4x, 5x
 and 6x; sym00013 at 8x; sym00008 at 11x: `INCAR.relax`, `INCAR.static`, `submit_vasp.sh`) are broken
@@ -149,14 +160,15 @@ and must not be reused:
 | `scf-soc` | `soc/scf/` | vasp_ncl | `../../non-soc/scf/CHGCAR`, then the same probe rule | `scf-nonsoc` |
 | `dos-nonsoc`, `dos-soc` | `<branch>/dos/` | as branch | `../scf/CHGCAR` | scf of that branch |
 | `bands-nonsoc`, `bands-soc` | `<branch>/bandstructure/` | as branch | `../scf/CHGCAR`; E_F from `../dos/` | dos of that branch |
-| `relax` (GB) | not defined yet | | | |
+| `convergence-nonsoc` (GB) | `<k>x/convergence/e<ENCUT>_k1x<N>x<N>/` | vasp_std | atomic density (ICHARG 2) | — |
+| `relax` (GB) | not defined; the [100] GBs stay static | | | |
 
 **B. SOAP guide "Unsupervised Discovery of Interface Spin Textures in B20 CoGe via SOAP"** (Dr. Gayles' report):
 
 | Stage | Content | Status |
 |---|---|---|
 | 1 | 1.1 SOAP of pristine + 1,541 bulk cells · 1.2 bulk invariance check · 1.3 GB descriptors (13,868) · 1.4 KRR GB vector → plane and operation · 1.5 coinciding vectors / distinct GBs (then raise n_max, l_max) · r_cut scan 4–12 Å | Done at r_cut 6: plane 0.999, grain class 0.49 (baseline 0.19), 1,112 distinct GBs. Scan on all thicknesses: same conclusions. Code: `src/dscribe/CoGe/`, `src/ML_dscribe_scripts/` |
-| 2 | KRR GB vector → GB energy, from VASP relaxations of FPS-chosen GBs; E_GB = (E_cell − n·ε_bulk) / (2A), two interfaces per cell | Selection done (`select_gbs.py`): six lists of 30 GBs (FPS and median, each in PCA, t-SNE and UMAP), in `plots/CoGe/dim-reduction/`. Their union, 162 8x POSCARs, is `results/dscribe/total_sample_list.csv`. No VASP yet. |
+| 2 | KRR GB vector → GB energy, from VASP relaxations of FPS-chosen GBs; E_GB = (E_cell − n·ε_bulk) / (2A), two interfaces per cell | Selection done (`select_gbs.py`): six lists of 30 GBs (FPS and median, each in PCA, t-SNE and UMAP), in `plots/CoGe/dim-reduction/`. Their union, 162 8x POSCARs, is `results/dscribe/total_sample_list.csv`. VASP: [100] ENCUT/k sweep on 4 GBs set up (2026-10-05), unrelaxed; production not started. |
 | 3 | KRR GB vector → vectorized SOC spin texture (PROCAR σx/σy/σz) | Not started |
 | 4 | PCA/UMAP anomaly map, bulk at the origin; isolated GBs are candidates | Not started |
 
@@ -204,8 +216,9 @@ Regenerating inputs in a session and re-checking them by eye is the expensive lo
 *prompt* must be re-checked on every run, but verified *code* stays verified. Review effort must
 grow with the number of scripts, not with the number of structures (13,868 GB cells, 1,541 bulk).
 
-**Current state: the generator does not exist yet and the registry is empty.** The rules below are
-binding now: any new input set goes through rule 2 before production.
+**Current state:** `src/vasp_inputs/make_vasp_inputs.py` v0.1.0 (git tag `vasp_inputs-v0.1.0`) holds
+the recipes in the registry below, and `vasp_task.py` / `run_vasp_array.slurm` / `submit_vasp.py` run
+its folders (README there). Any other (family, stage) goes through rule 2 before production.
 
 1. **Production inputs come only from a verified script** in `src/vasp_inputs/`. This covers INCAR,
    KPOINTS, POSCAR copies, POTCAR links, and the Slurm scripts and validators that go with them.
@@ -247,7 +260,8 @@ binding now: any new input set goes through rule 2 before production.
 6. **Do not re-review a verified recipe's output per structure.** Per-structure checks are
    validators (code). If the output looks wrong, stop and report, then fix and re-verify the script,
    never the files.
-7. **First build** (not done yet):
+7. **First build** (2026-10-05: git, `.gitignore`, `tags()` and the INCAR-writer pattern are done; the
+   dos/bands pieces get copied when those recipes are built):
    - Run `git init` with a `.gitignore` that excludes `calculations/ structures/ results/ archive/ plots/`,
      every `src/*/.venv` and large binaries.
    - Copy (do not import) from `archive/calculations/CoGe_Bulk/`:
@@ -262,7 +276,8 @@ binding now: any new input set goes through rule 2 before production.
 
 | Family | Stage | Version | Verified on | Golden | Note |
 |---|---|---|---|---|---|
-| — | — | — | — | — | none yet |
+| CoGe_100 | scf-nonsoc | 0.1.0 | 2026-10-05, test (b): tags equal the live sym00000/00311/00622 INCARs, KPOINTS byte-equal | the live runs | bulk anchor; base only, every write refused |
+| CoGe_100_GB | convergence-nonsoc | 0.1.0 | 2026-10-05, user approved the INCAR in the plan; tests (a)–(d) | `src/vasp_inputs/tests/golden/` (sym00177, sym00431 × e500_k1x9x9, e350_k1x9x9, e500_k1x3x3) | 9-point sweep, 16 ranks; 2 test runs at e500_k1x9x9 |
 
 Runs made before the generator carry no stamp. Their provenance is `result.json` / `validation.json`
 in each stage folder and `archive/reorganization_20261002/stages.tsv`.
