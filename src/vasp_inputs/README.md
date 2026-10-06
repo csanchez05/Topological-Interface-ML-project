@@ -31,7 +31,7 @@ v0.1.0's default mixing, sym00177 e500_k1x3x3 sloshed for 100 steps without conv
 
 ```bash
 python3 -B src/vasp_inputs/make_vasp_inputs.py --family CoGe_100_GB --stage convergence-nonsoc \
-    --thickness 8x --sym sym00485 sym00174 sym00016 sym00177 \
+    --thickness 8x --sym sym00190 sym00174 sym00016 sym00177 \
     --write-tasks results/CoGe_interface/100/convergence_8x/tasks.txt [--dry-run]
 ```
 

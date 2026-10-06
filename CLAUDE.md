@@ -121,25 +121,29 @@ Bulk status (details in `calculations/CoGe_Bulk/README.md`):
 
 **GB / interface VASP settings.** Decided for the [100] GBs (user, 2026-10-05 and 2026-10-06; details
 in `notes/interface_100_convergence_20261005.md`):
-- Scope: the 66 [100] 8x cells of the Stage 2 list (`results/dscribe/total_sample_list.csv`). Static,
-  no relaxation. Closest pairs: 61 of 66 have one < 2.0 Å, 33 < 1.5 Å, the worst 0.77 Å (bulk Co–Ge
-  bond 2.40 Å). How production treats the overlapping cells is **open** (below).
+- Scope: the [100] 8x cells of the Stage 2 list (`results/dscribe/total_sample_list.csv`) whose
+  closest pair is ≥ 1.8 Å: 13 of 66. Static, no relaxation.
+- **Overlap limit (set 2026-10-06 at the user's request): GB cells whose closest pair is < 1.8 Å are not run**, on any
+  plane. 1.8 Å is 75% of the bulk Co–Ge bond (2.40 Å). Survey and counts:
+  `src/dft_plots/coge_interface/README.md`, `results/CoGe_interface/overlap_survey.tsv`. At 8x, 114 of
+  623 [100], 9 of 543 [110] and 19 of 375 [111] catalogue families clear it.
 - ISMEAR 1, SIGMA 0.05 eV for scf, dos and bands, with no −5 probe. EDIFF 1E-6 for the convergence
   sweep, 1E-8 for production. LASPH off, as in bulk. ALGO Normal, as in bulk.
 - Damped mixing (v0.2.0, 2026-10-06): AMIN 0.01, AMIX 0.2, AMIX_MAG 0.8; BMIX/BMIX_MAG stay 1.0. With
   VASP's default mixing the 74 Å cell sloshed (sym00177, no close pair: 100 steps, no convergence).
 - Convergence sweep first (recipe `CoGe_100_GB` / `convergence-nonsoc`, section 7), non-SOC, 16 ranks:
-  - structures sym00485 (closest pair 1.49 Å, the median) and the clean cells sym00174 (2.02 Å),
-    sym00016 (2.23 Å) and sym00177 (2.40 Å). sym00431 (0.77 Å, diverged) and sym00144 (1.14 Å)
-    were dropped on 2026-10-06.
+  - structures sym00190 (closest pair 1.80 Å, the closest to the limit), sym00174 (2.02 Å),
+    sym00016 (2.23 Å) and sym00177 (2.40 Å). Earlier sets held sym00431 (0.77 Å, diverged), sym00144
+    (1.14 Å) and sym00485 (1.49 Å), all below the limit.
   - ENCUT 350–600 eV at Γ 1×9×9
   - Γ 1×N×N (N = 3–11) at 500 eV; kx stays 1 along the 74 Å axis
   - The references are 600 eV and N = 11, so the sweep shows convergence *towards* them, not of them.
 - The production ENCUT and k-mesh come from the sweep; the user confirms them.
 
 Everything else is **not decided. Ask; do not invent or copy bulk values silently.** Open questions:
-- the overlapping production cells (61 of 66 have a pair < 2.0 Å): delete one atom of each close
-  pair, relax, or leave them out. PAW is not valid at 0.77 Å, and that cell diverged.
+- whether to refill the [100] list (13 cells left) from the 114 [100] catalogue families above the
+  overlap limit, e.g. by rerunning the Stage 2 selection on those only
+- the 110/111 Stage 2 cells: only 1 [110] and 1 [111] of the list clear the overlap limit
 - relaxation, if ever: ISIF, IBRION, EDIFFG, NSW, selective dynamics, ENCUT (Pulay stress)
 - MAGMOM start and SAXIS for the GB SOC runs (bulk SAXIS `0 0 1` is an in-plane axis of the GB cell)
 - NBANDS for production, dos and bands; the dos mesh; the band path (the bulk cP1 path is invalid here)
@@ -174,7 +178,7 @@ and must not be reused:
 | Stage | Content | Status |
 |---|---|---|
 | 1 | 1.1 SOAP of pristine + 1,541 bulk cells · 1.2 bulk invariance check · 1.3 GB descriptors (13,868) · 1.4 KRR GB vector → plane and operation · 1.5 coinciding vectors / distinct GBs (then raise n_max, l_max) · r_cut scan 4–12 Å | Done at r_cut 6: plane 0.999, grain class 0.49 (baseline 0.19), 1,112 distinct GBs. Scan on all thicknesses: same conclusions. Code: `src/dscribe/CoGe/`, `src/ML_dscribe_scripts/` |
-| 2 | KRR GB vector → GB energy, from VASP relaxations of FPS-chosen GBs; E_GB = (E_cell − n·ε_bulk) / (2A), two interfaces per cell | Selection done (`select_gbs.py`): six lists of 30 GBs (FPS and median, each in PCA, t-SNE and UMAP), in `plots/CoGe/dim-reduction/`. Their union, 162 8x POSCARs, is `results/dscribe/total_sample_list.csv`. VASP: [100] ENCUT/k sweep on 4 GBs, unrelaxed: v0.1.0 (2026-10-05) failed (sloshing; divergence at 0.77 Å), v0.2.0 with damped mixing and clean cells (2026-10-06) awaits its first test; production not started. |
+| 2 | KRR GB vector → GB energy, from VASP relaxations of FPS-chosen GBs; E_GB = (E_cell − n·ε_bulk) / (2A), two interfaces per cell | Selection done (`select_gbs.py`): six lists of 30 GBs (FPS and median, each in PCA, t-SNE and UMAP), in `plots/CoGe/dim-reduction/`. Their union, 162 8x POSCARs, is `results/dscribe/total_sample_list.csv`. Overlap limit 1.8 Å (2026-10-06) leaves 13 of the 66 [100], 1 of 63 [110] and 1 of 33 [111] cells. VASP: [100] ENCUT/k sweep on 4 GBs, unrelaxed: v0.1.0 (2026-10-05) failed (sloshing; divergence at 0.77 Å), v0.2.0 with damped mixing (2026-10-06) awaits its first full test; production not started. |
 | 3 | KRR GB vector → vectorized SOC spin texture (PROCAR σx/σy/σz) | Not started |
 | 4 | PCA/UMAP anomaly map, bulk at the origin; isolated GBs are candidates | Not started |
 
