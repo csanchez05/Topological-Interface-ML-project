@@ -12,7 +12,7 @@ Standard library only; run with plain `python3 -B`. Version tag in git: `vasp_in
 | `submit_vasp.py` | Submits the pending folders of a task list as one array |
 | `test_make_vasp_inputs.py`, `test_vasp_task.py`, `tests/golden/` | Tests (a)–(d) of CLAUDE.md 7.4 plus the runner tests |
 
-## Recipes (v0.1.0)
+## Recipes (v0.2.0)
 
 | Family / stage | Target | Note |
 | --- | --- | --- |
@@ -23,16 +23,22 @@ Convergence INCAR, changes from the bulk anchor: ENCUT per point, EDIFF 1E-6, IS
 kept), LCHARG .FALSE., ICHARG 2 (atomic start), KPAR 4 (1 for 1×3×3), NCORE 4, NBANDS 512 added,
 LORBIT dropped. MAGMOM `64*1.0 64*0.0` follows the bulk rule. Run profile: 16 MPI ranks.
 
+v0.2.0 adds damped density mixing after NELM: AMIX 0.2, AMIX_MAG 0.8 (half VASP's defaults) and
+AMIN 0.01 (VASP's advice for a lattice vector > 50 Å); BMIX/BMIX_MAG keep the default 1.0. With
+v0.1.0's default mixing, sym00177 e500_k1x3x3 sloshed for 100 steps without converging.
+
 ## Generate
 
 ```bash
 python3 -B src/vasp_inputs/make_vasp_inputs.py --family CoGe_100_GB --stage convergence-nonsoc \
-    --thickness 8x --sym sym00431 sym00144 sym00485 sym00177 \
+    --thickness 8x --sym sym00485 sym00174 sym00016 sym00177 \
     --write-tasks results/CoGe_interface/100/convergence_8x/tasks.txt [--dry-run]
 ```
 
 - A target holding any VASP output (or `result.json`) is **refused**; identical inputs are **skipped**
   (only the git hash in the stamp may differ); different inputs or extra files **stop** the run.
+- Every folder is classified before anything is written: if any folder has a problem, no folder is
+  written and no task list is written (since v0.2.0).
 - The POSCAR must be a byte copy of the catalogue POSCAR, scale 1.0, `Co Ge`, the recipe's counts.
 - Real writes refuse while `src/vasp_inputs/` has uncommitted changes; the stamp carries the hash of
   the last commit touching it.
@@ -52,8 +58,9 @@ python3 -B src/vasp_inputs/submit_vasp.py --tasks results/CoGe_interface/100/con
   (`<records>/claims/<sym>_<k>x_<point>.json`, O_EXCL) and stages INCAR/KPOINTS/POSCAR into
   `mkdtemp` under `$TMPDIR` (else `/tmp`, at least 10 GiB free). POTCAR there is a symlink, never a copy.
 - `finish` validates the run from OUTCAR/OSZICAR/vasprun.xml: exit code, VASP 6.4.3, finished, EDIFF
-  reached in fewer than NELM steps, POTCAR TITELs, NIONS, NELECT, the INCAR tags echoed by VASP, the
-  k-mesh, the KPAR/NCORE decomposition and NBANDS.
+  reached in fewer than NELM steps, POTCAR TITELs, NIONS, NELECT, the INCAR tags echoed by VASP
+  (including AMIX, AMIX_MAG and AMIN when the INCAR sets them), the k-mesh, the KPAR/NCORE
+  decomposition and NBANDS. `result.json` records the mixing values VASP used.
   - Valid: copies OUTCAR, OSZICAR, EIGENVAL, IBZKPT, DOSCAR, vasprun.xml, vasp.out (plus CHGCAR if
     LCHARG, PROCAR if LORBIT) via `*.copying` + SHA-256 + rename, writes `result.json` last (energies,
     E_F, magnetization, NKPTS, NBANDS, NPLWV, SCF steps, wall time, peak RSS, VASP warnings), removes

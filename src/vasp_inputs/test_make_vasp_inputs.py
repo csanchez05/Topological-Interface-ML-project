@@ -21,7 +21,7 @@ import make_vasp_inputs as mvi  # noqa: E402
 
 GOLDEN = Path(__file__).resolve().parent / "tests/golden"
 GOLDEN_CASES = [("CoGe_100_GB", "convergence-nonsoc", sym, "8x", point)
-                for sym in ("sym00177", "sym00431")
+                for sym in ("sym00177", "sym00174")
                 for point in ("e500_k1x9x9", "e350_k1x9x9", "e500_k1x3x3")]
 GOLDEN_HASH = "GOLDEN"
 BULK_LIVE = ("sym00000", "sym00311", "sym00622")
@@ -91,8 +91,8 @@ class BulkAnchor(unittest.TestCase):
             "SYSTEM": ("CoGe B20 SCF", "CoGe B20 [100] GB convergence"),
             "ENCUT": ("600", "500"), "EDIFF": ("1E-8", "1E-6"), "ISMEAR": ("-1", "1"),
             "LCHARG": (".TRUE.", ".FALSE."), "ICHARG": ("1", "2"), "KPAR": ("3", "4"), "NCORE": ("1", "4")})
-        self.assertEqual(gb.keys() - anchor.keys(), {"NBANDS"})
-        self.assertEqual(gb["NBANDS"], "512")
+        added = {k: gb[k] for k in gb.keys() - anchor.keys()}
+        self.assertEqual(added, {"NBANDS": "512", "AMIX": "0.2", "AMIX_MAG": "0.8", "AMIN": "0.01"})
         self.assertEqual(anchor.keys() - gb.keys(), {"LORBIT"})
         self.assertEqual(gb["MAGMOM"], "64*1.0 64*0.0")
         self.assertEqual(gb["SIGMA"], "0.05")
@@ -101,7 +101,7 @@ class BulkAnchor(unittest.TestCase):
         a = mvi.render_incar("CoGe_100_GB", "convergence-nonsoc", "e500_k1x9x9", (64, 64), "abc1234")
         b = mvi.render_incar("CoGe_100_GB", "convergence-nonsoc", "e500_k1x9x9", (64, 64), "fff9999")
         self.assertTrue(mvi.same_incar(a, b))
-        self.assertFalse(mvi.same_incar(a, b.replace("v0.1.0", "v0.1.1")))
+        self.assertFalse(mvi.same_incar(a, b.replace(f"v{mvi.VERSION}", "v9.9.9")))
         self.assertFalse(mvi.same_incar(a, b.replace("ENCUT = 500", "ENCUT = 501")))
 
     def test_base_recipe_is_never_written(self):
@@ -138,7 +138,7 @@ class TempTree(unittest.TestCase):
         self.assertEqual(sorted(os.listdir(f)), ["INCAR", "KPOINTS", "POSCAR", "POTCAR"])
         self.assertEqual(os.readlink(f / "POTCAR"), str(self.root / "calculations/CoGe_interface/POTCAR"))
         self.assertTrue((f / "INCAR").read_text().startswith(
-            "# make_vasp_inputs.py v0.1.0 (git abc1234) family=CoGe_100_GB stage=convergence-nonsoc\n"))
+            f"# make_vasp_inputs.py v{mvi.VERSION} (git abc1234) family=CoGe_100_GB stage=convergence-nonsoc\n"))
         counts, problems, _, _ = self.run_gen(git_hash="fff9999")  # only the stamp hash differs
         self.assertEqual((counts["identical"], counts["written"], problems), (9, 0, []))
 
@@ -164,6 +164,18 @@ class TempTree(unittest.TestCase):
         self.assertEqual(len(problems), 2)
         self.assertTrue(any("different: KPOINTS" in p for p in problems))
         self.assertTrue(any("unexpected file" in p for p in problems))
+
+    def test_a_problem_blocks_every_write(self):
+        self.run_gen()
+        new = self.folder("e600_k1x9x9")
+        for name in os.listdir(new):
+            os.remove(new / name)
+        new.rmdir()
+        (self.folder("e350_k1x9x9") / "KPOINTS").write_text("changed\n")
+        counts, problems, ready, _ = self.run_gen()
+        self.assertEqual((counts["written"], counts["not written"], counts["identical"], len(problems), ready),
+                         (0, 1, 7, 1, []))
+        self.assertFalse(new.exists())
 
     def test_catalogue_mismatch_stops(self):
         r = mvi.recipe("CoGe_100_GB", "convergence-nonsoc")
@@ -197,7 +209,7 @@ class Poscar(unittest.TestCase):
                     mvi.check_poscar(text, (64, 64))
 
     def test_selected_real_cells_pass(self):
-        for sym in ("sym00431", "sym00144", "sym00485", "sym00177"):
+        for sym in ("sym00485", "sym00174", "sym00016", "sym00177"):
             text = (mvi.PROJECT_ROOT / f"calculations/CoGe_interface/100/{sym}/8x/POSCAR").read_text()
             self.assertEqual(mvi.check_poscar(text, (64, 64))["atoms"], 128)
 

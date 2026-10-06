@@ -44,6 +44,7 @@ EXPORT_ALWAYS = ("OUTCAR", "OSZICAR", "EIGENVAL", "IBZKPT", "DOSCAR", "vasprun.x
 MIN_FREE_GIB = 10
 SAMPLE_SECONDS = 30
 NUM = r"([-+]?[0-9.]+(?:[EeDd][-+]?\d+)?)"
+MIXING = ("AMIX", "AMIX_MAG", "AMIN")  # OUTCAR "AMIX     =   0.40;   BMIX ...", "AMIN     =   0.10"
 
 
 class TaskError(Exception):
@@ -259,6 +260,11 @@ def validate(scratch, prepared, exit_code):
     smear, sigma = last(r"^\s*ISMEAR\s*=\s*(-?\d+);\s*SIGMA\s*=\s*" + NUM, out)
     require(int(smear) == int(incar["ISMEAR"]) and abs(number(sigma) - float(incar["SIGMA"])) < 1e-9,
             "ISMEAR/SIGMA")
+    mixing = {key: number(last(r"^\s*" + key + r"\s*=\s*" + NUM, out)) for key in MIXING}
+    for key in MIXING:
+        if key in incar:
+            require(abs(mixing[key] - float(incar[key])) < 1e-9,
+                    f"OUTCAR {key} {mixing[key]} != INCAR {incar[key]}")
     flags = {"LSORBIT": incar.get("LSORBIT", ".FALSE."), "LREAL": incar.get("LREAL", ".FALSE."),
              "LWAVE": incar.get("LWAVE", ".TRUE."), "LCHARG": incar.get("LCHARG", ".TRUE.")}
     for key, value in flags.items():
@@ -288,7 +294,7 @@ def validate(scratch, prepared, exit_code):
         "valid": True,
         "nions": nions, "nelect": nelect, "counts": counts, "encut_eV": float(incar["ENCUT"]),
         "mesh": list(mesh), "ismear": int(incar["ISMEAR"]), "sigma_eV": float(incar["SIGMA"]),
-        "ediff_eV": float(incar["EDIFF"]),
+        "ediff_eV": float(incar["EDIFF"]), "mixing": mixing,
         "nkpts": nkpts, "nbands": nbands, "nplwv": int(last(r"NPLWV\s*=\s*(\d+)", out)),
         "scf_steps": steps,
         "toten_eV": toten, "toten_eV_atom": toten / nions,

@@ -119,21 +119,27 @@ Bulk status (details in `calculations/CoGe_Bulk/README.md`):
 | CoGe_110 | 543 | 543 | 497 (46 only reached the probe) | not run |
 | CoGe_111 | 375 | sym00000 only | none | not run |
 
-**GB / interface VASP settings.** Decided for the [100] GBs (user, 2026-10-05; details in
-`notes/interface_100_convergence_20261005.md`):
+**GB / interface VASP settings.** Decided for the [100] GBs (user, 2026-10-05 and 2026-10-06; details
+in `notes/interface_100_convergence_20261005.md`):
 - Scope: the 66 [100] 8x cells of the Stage 2 list (`results/dscribe/total_sample_list.csv`). Static,
-  no relaxation. Overlapping atoms are run as-is, with the closest pair recorded (33 of 66 have a pair
-  < 1.5 Å; the worst is 0.77 Å).
+  no relaxation. Closest pairs: 61 of 66 have one < 2.0 Å, 33 < 1.5 Å, the worst 0.77 Å (bulk Co–Ge
+  bond 2.40 Å). How production treats the overlapping cells is **open** (below).
 - ISMEAR 1, SIGMA 0.05 eV for scf, dos and bands, with no −5 probe. EDIFF 1E-6 for the convergence
-  sweep, 1E-8 for production. LASPH off, as in bulk.
+  sweep, 1E-8 for production. LASPH off, as in bulk. ALGO Normal, as in bulk.
+- Damped mixing (v0.2.0, 2026-10-06): AMIN 0.01, AMIX 0.2, AMIX_MAG 0.8; BMIX/BMIX_MAG stay 1.0. With
+  VASP's default mixing the 74 Å cell sloshed (sym00177, no close pair: 100 steps, no convergence).
 - Convergence sweep first (recipe `CoGe_100_GB` / `convergence-nonsoc`, section 7), non-SOC, 16 ranks:
-  - structures sym00431, sym00144, sym00485 and sym00177
+  - structures sym00485 (closest pair 1.49 Å, the median) and the clean cells sym00174 (2.02 Å),
+    sym00016 (2.23 Å) and sym00177 (2.40 Å). sym00431 (0.77 Å, diverged) and sym00144 (1.14 Å)
+    were dropped on 2026-10-06.
   - ENCUT 350–600 eV at Γ 1×9×9
   - Γ 1×N×N (N = 3–11) at 500 eV; kx stays 1 along the 74 Å axis
   - The references are 600 eV and N = 11, so the sweep shows convergence *towards* them, not of them.
 - The production ENCUT and k-mesh come from the sweep; the user confirms them.
 
 Everything else is **not decided. Ask; do not invent or copy bulk values silently.** Open questions:
+- the overlapping production cells (61 of 66 have a pair < 2.0 Å): delete one atom of each close
+  pair, relax, or leave them out. PAW is not valid at 0.77 Å, and that cell diverged.
 - relaxation, if ever: ISIF, IBRION, EDIFFG, NSW, selective dynamics, ENCUT (Pulay stress)
 - MAGMOM start and SAXIS for the GB SOC runs (bulk SAXIS `0 0 1` is an in-plane axis of the GB cell)
 - NBANDS for production, dos and bands; the dos mesh; the band path (the bulk cP1 path is invalid here)
@@ -168,7 +174,7 @@ and must not be reused:
 | Stage | Content | Status |
 |---|---|---|
 | 1 | 1.1 SOAP of pristine + 1,541 bulk cells · 1.2 bulk invariance check · 1.3 GB descriptors (13,868) · 1.4 KRR GB vector → plane and operation · 1.5 coinciding vectors / distinct GBs (then raise n_max, l_max) · r_cut scan 4–12 Å | Done at r_cut 6: plane 0.999, grain class 0.49 (baseline 0.19), 1,112 distinct GBs. Scan on all thicknesses: same conclusions. Code: `src/dscribe/CoGe/`, `src/ML_dscribe_scripts/` |
-| 2 | KRR GB vector → GB energy, from VASP relaxations of FPS-chosen GBs; E_GB = (E_cell − n·ε_bulk) / (2A), two interfaces per cell | Selection done (`select_gbs.py`): six lists of 30 GBs (FPS and median, each in PCA, t-SNE and UMAP), in `plots/CoGe/dim-reduction/`. Their union, 162 8x POSCARs, is `results/dscribe/total_sample_list.csv`. VASP: [100] ENCUT/k sweep on 4 GBs set up (2026-10-05), unrelaxed; production not started. |
+| 2 | KRR GB vector → GB energy, from VASP relaxations of FPS-chosen GBs; E_GB = (E_cell − n·ε_bulk) / (2A), two interfaces per cell | Selection done (`select_gbs.py`): six lists of 30 GBs (FPS and median, each in PCA, t-SNE and UMAP), in `plots/CoGe/dim-reduction/`. Their union, 162 8x POSCARs, is `results/dscribe/total_sample_list.csv`. VASP: [100] ENCUT/k sweep on 4 GBs, unrelaxed: v0.1.0 (2026-10-05) failed (sloshing; divergence at 0.77 Å), v0.2.0 with damped mixing and clean cells (2026-10-06) awaits its first test; production not started. |
 | 3 | KRR GB vector → vectorized SOC spin texture (PROCAR σx/σy/σz) | Not started |
 | 4 | PCA/UMAP anomaly map, bulk at the origin; isolated GBs are candidates | Not started |
 
@@ -216,7 +222,7 @@ Regenerating inputs in a session and re-checking them by eye is the expensive lo
 *prompt* must be re-checked on every run, but verified *code* stays verified. Review effort must
 grow with the number of scripts, not with the number of structures (13,868 GB cells, 1,541 bulk).
 
-**Current state:** `src/vasp_inputs/make_vasp_inputs.py` v0.1.0 (git tag `vasp_inputs-v0.1.0`) holds
+**Current state:** `src/vasp_inputs/make_vasp_inputs.py` v0.2.0 (git tag `vasp_inputs-v0.2.0`) holds
 the recipes in the registry below, and `vasp_task.py` / `run_vasp_array.slurm` / `submit_vasp.py` run
 its folders (README there). Any other (family, stage) goes through rule 2 before production.
 
@@ -277,7 +283,7 @@ its folders (README there). Any other (family, stage) goes through rule 2 before
 | Family | Stage | Version | Verified on | Golden | Note |
 |---|---|---|---|---|---|
 | CoGe_100 | scf-nonsoc | 0.1.0 | 2026-10-05, test (b): tags equal the live sym00000/00311/00622 INCARs, KPOINTS byte-equal | the live runs | bulk anchor; base only, every write refused |
-| CoGe_100_GB | convergence-nonsoc | 0.1.0 | 2026-10-05, user approved the INCAR in the plan; tests (a)–(d) | `src/vasp_inputs/tests/golden/` (sym00177, sym00431 × e500_k1x9x9, e350_k1x9x9, e500_k1x3x3) | 9-point sweep, 16 ranks; 2 test runs at e500_k1x9x9 |
+| CoGe_100_GB | convergence-nonsoc | 0.2.0 | 2026-10-06, user chose the mixing tags and approved the golden diff to v0.1.0; tests (a)–(d) | `src/vasp_inputs/tests/golden/` (sym00177, sym00174 × e500_k1x9x9, e350_k1x9x9, e500_k1x3x3) | v0.1.0 + AMIX 0.2, AMIX_MAG 0.8, AMIN 0.01; a call with any problem writes nothing. v0.1.0 (2026-10-05) sloshed; its folders are in `archive/` |
 
 Runs made before the generator carry no stamp. Their provenance is `result.json` / `validation.json`
 in each stage folder and `archive/reorganization_20261002/stages.tsv`.

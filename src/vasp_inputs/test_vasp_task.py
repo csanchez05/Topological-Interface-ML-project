@@ -50,6 +50,12 @@ OUTCAR = """\
    EDIFF  = 0.1E-05   stopping-criterion for ELM
    LREAL  =      F    real-space projection
    LMAXMIX     =    4 max onsite mixed and CHGCAR
+   IMIX   =      4    mixing-type and parameters
+     AMIX     =   0.20;   BMIX     =  1.00
+     AMIX_MAG =   0.80;   BMIX_MAG =  1.00
+     AMIN     =   0.01
+     WC   =   100.;   INIMIX=   1;  MIXPRE=   1;  MAXMIX= -45
+ initial mixing is a Kerker type mixing with AMIX =  0.2000 and BMIX =      1.0000
    NSW    =      0    number of steps for IOM
    IBRION =     -1    ionic relax: 0-MD 1-quasi-New 2-CG
    ISYM   =      2    0-nonsym 1-usesym 2-fastsym
@@ -209,6 +215,7 @@ class Validate(Tree):
         self.assertEqual((rec["nions"], rec["nelect"], rec["mesh"], rec["nkpts"], rec["nbands"], rec["scf_steps"]),
                          (128, 832.0, [1, 9, 9], 25, 512, 31))
         self.assertEqual((rec["encut_eV"], rec["ismear"], rec["sigma_eV"], rec["ediff_eV"]), (500.0, 1, 0.05, 1e-6))
+        self.assertEqual(rec["mixing"], {"AMIX": 0.2, "AMIX_MAG": 0.8, "AMIN": 0.01})
         self.assertAlmostEqual(rec["toten_eV"], -812.34567890)
         self.assertAlmostEqual(rec["toten_eV_atom"], -812.34567890 / 128)
         self.assertAlmostEqual(rec["e0_eV"], -812.32283945)
@@ -235,6 +242,9 @@ class Validate(Tree):
             "ISMEAR/SIGMA": {"OUTCAR": [("ISMEAR =     1;", "ISMEAR =    -1;")]},
             "OUTCAR ICHARG": {"OUTCAR": [("ICHARG =      2", "ICHARG =      1")]},
             "OUTCAR LCHARG": {"OUTCAR": [("LCHARG       =      F", "LCHARG       =      T")]},
+            "OUTCAR AMIX 0.4": {"OUTCAR": [("AMIX     =   0.20", "AMIX     =   0.40")]},
+            "OUTCAR AMIX_MAG 1.6": {"OUTCAR": [("AMIX_MAG =   0.80", "AMIX_MAG =   1.60")]},
+            "OUTCAR AMIN 0.1": {"OUTCAR": [("AMIN     =   0.01", "AMIN     =   0.10")]},
             "not vasp.6.4.3": {"OUTCAR": [("vasp.6.4.3", "vasp.6.2.0")]},
             "vasprun.xml incomplete": {"vasprun.xml": [("</modeling>", "")]},
         }

@@ -12,16 +12,19 @@ Registered recipes
                                     every write is refused.
   CoGe_100_GB / convergence-nonsoc  ENCUT and k-mesh sweep of the [100] GB cells:
                                     ENCUT 350-600 eV at Gamma 1x9x9 and 1xNxN
-                                    (N = 3..11) at 500 eV, static, ISMEAR 1.
+                                    (N = 3..11) at 500 eV, static, ISMEAR 1,
+                                    damped density mixing for the 74 A cell
+                                    (AMIN 0.01, AMIX 0.2, AMIX_MAG 0.8; v0.2.0).
 
 Each stage folder gets INCAR (line 1 is the version stamp), KPOINTS, a POSCAR
 copy and an absolute POTCAR symlink. A folder holding any VASP output is
-refused; identical inputs are skipped; different inputs stop the run.
+refused; identical inputs are skipped; different inputs stop the run, and
+then nothing is written for any folder of that call.
 
 Example
   python3 -B src/vasp_inputs/make_vasp_inputs.py --family CoGe_100_GB \\
       --stage convergence-nonsoc --thickness 8x \\
-      --sym sym00431 sym00144 sym00485 sym00177 \\
+      --sym sym00485 sym00174 sym00016 sym00177 \\
       --write-tasks results/CoGe_interface/100/convergence_8x/tasks.txt --dry-run
 """
 import argparse
@@ -32,7 +35,7 @@ import re
 import subprocess
 import sys
 
-VERSION = "0.1.0"
+VERSION = "0.2.0"
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
 CODE_DIR = Path(__file__).resolve().parent
 INTERFACE = PROJECT_ROOT / "calculations/CoGe_interface"
@@ -125,7 +128,15 @@ RECIPES = {
             "KPAR": "{kpar}",
             "NCORE": "4",
         },
-        "insert_after": {"NBANDS": ("NCORE", "512")},  # same band count at every point
+        "insert_after": {
+            "NBANDS": ("NCORE", "512"),  # same band count at every point
+            # v0.2.0: v0.1.0 sloshed (sym00177 e500_k1x3x3, 100 steps, E -753..-775 eV). VASP's
+            # advice for a lattice vector > 50 A is AMIN 0.01; AMIX and AMIX_MAG are half the
+            # defaults (0.4, 1.6). BMIX/BMIX_MAG stay 1.0 (Kerker). The path changes, not the answer.
+            "AMIX": ("NELM", "0.2"),
+            "AMIX_MAG": ("AMIX", "0.8"),
+            "AMIN": ("AMIX_MAG", "0.01"),
+        },
         "drop": ("LORBIT",),         # energies only; no PROCAR or projections
         "kpoints_comment": "CoGe [100] GB Gamma mesh",
         "points": sweep_points(GB_ENCUT_SWEEP, GB_K_SWEEP),
@@ -323,10 +334,11 @@ def write_folder(target, files, potcar):
 
 
 def generate(family, stage, syms, thickness, points, dry_run, git_hash, root=PROJECT_ROOT):
+    """Classify every folder first; write the new ones only if no folder has a problem."""
     r = recipe(family, stage)
     points = list(points or r["points"])
     counts = {"written": 0, "identical": 0, "refused": 0, "new (dry-run)": 0}
-    problems, ready, refused = [], [], []
+    problems, planned, refused = [], [], []
     require(r["writable"], f"{family}/{stage} is a base recipe; its targets hold finished runs")
     require((root / r["potcar"]).is_file(), f"missing POTCAR master {root / r['potcar']}")
     for sym in syms:
@@ -340,18 +352,21 @@ def generate(family, stage, syms, thickness, points, dry_run, git_hash, root=PRO
             if state == "refused":
                 counts["refused"] += 1
                 refused.append(target)
-            elif state == "identical":
-                counts["identical"] += 1
-                ready.append(target)
             elif state.startswith("different"):
                 problems.append(f"{target}: {state}")
-            elif dry_run:
-                counts["new (dry-run)"] += 1
-                ready.append(target)
             else:
-                write_folder(target, files, potcar)
-                counts["written"] += 1
-                ready.append(target)
+                planned.append((state, target, files, potcar))
+    new = sum(state == "new" for state, *_ in planned)
+    counts["identical"] = len(planned) - new
+    if problems:
+        counts["not written"] = new
+        return counts, problems, [], refused
+    ready = []
+    for state, target, files, potcar in planned:
+        if state == "new" and not dry_run:
+            write_folder(target, files, potcar)
+        ready.append(target)
+    counts["new (dry-run)" if dry_run else "written"] = new
     return counts, problems, ready, refused
 
 
