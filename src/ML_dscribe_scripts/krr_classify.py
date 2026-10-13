@@ -36,6 +36,9 @@ of geometry_labels.py (settings chosen by the inner-fold squared error), with
 R^2 and mean absolute error against predicting the training mean; for the
 pooled data set also per plane.
 
+--descriptor-type ace uses the ACE vectors (src/ACE/CoGe) instead of SOAP and writes into
+calculations/ML_ACE/CoGe/ instead of calculations/ML_dscribe/CoGe/.
+
 Outputs, in calculations/ML_dscribe/CoGe/<descriptor tag>/<vector tag>/ (a folder that
 already holds krr_summary.csv is refused unless --overwrite is given):
   krr_summary.csv         one row per data set, label and grouping
@@ -507,6 +510,7 @@ def main():
     parser.add_argument("--overwrite", action="store_true",
                         help="write into a folder that already holds krr_summary.csv")
     args = parser.parse_args()
+    mc.resolve_vector_arguments(args, parser)
     import pandas as pd
 
     started = time.time()
@@ -514,7 +518,8 @@ def main():
     if (out / "krr_summary.csv").exists() and not args.overwrite:
         parser.error(f"{sc.relative_path(out)} already holds krr_summary.csv; choose another --out-dir "
                      "or pass --overwrite")
-    X, index, notes = mc.load_family_vectors(args.descriptor, args.kind, args.radius, args.planes, args.thickness)
+    X, index, notes = mc.load_family_vectors(args.descriptor, args.kind, args.radius, args.planes, args.thickness,
+                                             **mc.vector_source(args))
     if not args.keep_no_boundary:
         gone = mc.no_boundary_rows(index)
         if gone.any():

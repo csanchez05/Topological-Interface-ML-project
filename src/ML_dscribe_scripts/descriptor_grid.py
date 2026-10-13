@@ -8,7 +8,7 @@ Tasks, started as CPUs and memory allow (a task waits for the tasks it needs):
                      8 A and r_cut + 2), check_gb.py. Settings already stored are skipped.
   sensitivity        descriptor_sensitivity.py (part C), once every descriptor task is done
   benchmark          selection_benchmark.py (part D), once every descriptor task is done
-  plots              plot_descriptor_study.py: the figures in plots/CoGe/dim-reduction/, once
+  plots              plot_descriptor_study.py: the figures in plots/CoGe/dim-reduction/SOAP/, once
                      both analyses and the covariant run are done
 
 Finished tasks are recognised by their output files and skipped, so the job can simply be
@@ -319,7 +319,7 @@ def main():
     parser.add_argument("--no-covariant", action="store_true")
     parser.add_argument("--no-analyses", action="store_true", help="no analyses (and so no figures)")
     parser.add_argument("--no-plots", action="store_true", help="no figures")
-    parser.add_argument("--plot-dir", type=Path, default=sc.PROJECT_ROOT / "plots" / "CoGe" / "dim-reduction",
+    parser.add_argument("--plot-dir", type=Path, default=mc.plot_root("soap"),
                         help="where plot_descriptor_study.py writes its folders")
     parser.add_argument("--limit", type=int, default=0, help="only the first N sym folders per plane (smoke test)")
     parser.add_argument("--force", action="store_true", help="redo analyses and figures whose outputs already exist")
@@ -337,7 +337,7 @@ def main():
         parser.error("--limit writes partial runs; give a scratch --descriptor-root and --covariant-root")
     if args.limit and args.study == "representation":
         defaults = {"--labels-dir": (args.labels_dir, gl.OUT_DIR), "--out-root": (args.out_root, mc.OUTPUT_ROOT),
-                    "--plot-dir": (args.plot_dir, sc.PROJECT_ROOT / "plots" / "CoGe" / "dim-reduction"),
+                    "--plot-dir": (args.plot_dir, mc.plot_root("soap")),
                     "--log-dir": (args.log_dir, REPRESENTATION_LOG_DIR / f"part{args.part}")}
         unchanged = [flag for flag, (value, default) in defaults.items() if Path(value) == Path(default)]
         if unchanged:

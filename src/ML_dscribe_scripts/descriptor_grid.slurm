@@ -13,7 +13,7 @@
 #
 # Descriptor study (SOAP guide Stage 1, before the Stage 2 picks), one whole node:
 # 17 SOAP runs on all 13,868 GB structures, the covariant run, then descriptor_sensitivity.py
-# and selection_benchmark.py, and last the figures in plots/CoGe/dim-reduction/
+# and selection_benchmark.py, and last the figures in plots/CoGe/dim-reduction/SOAP/
 # (plot_descriptor_study.py). descriptor_grid.py keeps every CPU of the allocation busy and
 # stays inside the memory of the allocation. Resubmit at any time: finished tasks are skipped.
 #

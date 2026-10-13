@@ -10,7 +10,8 @@ Standard library only; run with plain `python3 -B`. Version tag in git: `vasp_in
 | `vasp_task.py` | One array task: `prepare` (checks, claim, node-local scratch), `binary`, `sample` (peak RSS), `finish` (validate, copy back, `result.json`) |
 | `run_vasp_array.slurm` | The Slurm array script; the VASP environment block is verbatim from CLAUDE.md section 2 |
 | `submit_vasp.py` | Submits the pending folders of a task list as one array |
-| `test_make_vasp_inputs.py`, `test_vasp_task.py`, `tests/golden/` | Tests (a)–(d) of CLAUDE.md 7.4 plus the runner tests |
+| `test_make_vasp_inputs.py`, `test_vasp_task.py`, `test_scf_trials.py`, `tests/golden/` | Tests (a)–(d) of CLAUDE.md 7.4 plus the runner and trial-tool tests |
+| `scf_trials.py`, `scf_trials.slurm` | Test tool, not a generator: the 2026-10-13 SCF trials (below). Its inputs never go into `calculations/` |
 
 ## Recipes (v0.2.0)
 
@@ -68,6 +69,38 @@ python3 -B src/vasp_inputs/submit_vasp.py --tasks results/CoGe_interface/100/con
   - Invalid: the stage folder is untouched, the scratch and claim stay, and
     `<records>/failed/<sym>_<k>x_<point>_<job>.json` says why. Delete the claim to allow a rerun.
 - `vaspout.h5`, WAVECAR and CHG are never copied back.
+
+## SCF trials (`scf_trials.py`, 2026-10-13)
+
+v0.2.0's sym00177 `e500_k1x3x3` run (job 12919) stopped at NELM 100 without converging. The total
+moment fell from 64 to about 7 μB, and the charge residual rms(c) never dropped below 1.3. The trials
+try four mixing routes on sym00177 and sym00190 at `e500_k1x3x3`, all at once. Each trial runs on
+16 ranks with KPAR 1, as 12919 did, with NELM 200. ALGO, ISMEAR/SIGMA, ENCUT, the mesh, EDIFF,
+ISPIN 2 and MAGMOM stay as in v0.2.0.
+
+| Variant | Change from the v0.2.0 INCAR (all: NELM 200) |
+| --- | --- |
+| `linmag` | BMIX_MAG 0.0001: linear mixing for the magnetization; Kerker damping kept for the charge |
+| `wiki` | BMIX 0.0001, BMIX_MAG 0.0001: the VASP-wiki recipe for hard magnetic systems |
+| `nmseed` | run1: ISPIN 1, LCHARG .TRUE., no MAGMOM/AMIX_MAG; run2: ICHARG 1 from run1's CHGCAR (MAGMOM 64*1.0 applied on top) |
+| `nmseed_linmag` | as `nmseed`, with run2 also using BMIX_MAG 0.0001 |
+
+```bash
+python3 -B src/vasp_inputs/scf_trials.py list        # each run's INCAR change from v0.2.0
+python3 -B src/vasp_inputs/scf_trials.py submit --records results/CoGe_interface/100/convergence_8x/scf_trials_20261013 \
+    --nodelist qcg3-0 [--dry-run]
+python3 -B src/vasp_inputs/scf_trials.py table --records results/CoGe_interface/100/convergence_8x/scf_trials_20261013
+```
+
+- **Inputs:** INCARs are the v0.2.0 recipe as rendered by `make_vasp_inputs.py` plus the variant's
+  overrides. Line 1 is a trial stamp. The tool refuses to run against any other generator version.
+- **Where it runs:** the POSCAR passes the generator's checks. Every run happens in
+  `$TMPDIR/coge-trial-<sym>-<variant>-<job>-*/run<k>/`, and the scratch is always kept.
+- **Seeding:** run2 starts only if run1 reached EDIFF. Its record checks that VASP read the CHGCAR
+  (ICHARG 1) and that the starting moment is about 64 μB, which shows MAGMOM was applied.
+- **Records:** `summarize` writes `<records>/trials/<label>.json` per trial, and `table` builds
+  `trials.tsv`. A trial counts as converged only if every run reached EDIFF in fewer than NELM steps
+  and the last run is spin-polarized.
 
 ## Tests
 

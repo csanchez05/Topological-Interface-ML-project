@@ -1,8 +1,9 @@
 """Shared helpers for the Stage 1 analysis scripts (steps 1.4 and 1.5).
 
-Loads one SOAP vector per grain-boundary family through soap_common.load_gb,
-measures relative distances between vectors, groups vectors that coincide,
-and writes tables atomically.
+Loads one vector per grain-boundary family, measures relative distances between
+vectors, groups vectors that coincide, and writes tables atomically. The vectors
+are SOAP (soap_common.load_gb, the default) or ACE (ace_common.load_gb_vectors,
+with --descriptor-type ace); ACE results go to calculations/ML_ACE/CoGe/.
 """
 from __future__ import annotations
 
@@ -24,9 +25,19 @@ if str(SOAP_SCRIPTS) not in sys.path:
 
 import soap_common as sc  # noqa: E402
 
+ACE_SCRIPTS = PROJECT_ROOT / "src" / "ACE" / "CoGe"
 OUTPUT_ROOT = PROJECT_ROOT / "calculations" / "ML_dscribe" / "CoGe"
+DESCRIPTOR_TYPES = ("soap", "ace")
+# Analyses of each descriptor type go to their own tree; labels and the census stay in OUTPUT_ROOT.
+OUTPUT_ROOTS = {"soap": OUTPUT_ROOT, "ace": PROJECT_ROOT / "calculations" / "ML_ACE" / "CoGe"}
 LABELS_DIR = OUTPUT_ROOT / "labels"
+# Stage 2 maps and the descriptor-study figures, one folder per descriptor type (since 2026-10-13).
+DIMRED_PLOTS = PROJECT_ROOT / "plots" / "CoGe" / "dim-reduction"
+PLOT_FOLDERS = {"soap": "SOAP", "ace": "ACE"}
 DEFAULT_DESCRIPTOR = "rc6.0_n8_l6_s0.5"
+DEFAULT_DESCRIPTORS = {"soap": DEFAULT_DESCRIPTOR, "ace": "rc6.0_n8_l6_s0.5_nu3-n4-l4"}
+ACE_BLOCKS = ("nu1", "nu2", "nu3_even", "nu3_odd")
+ACE_SCALINGS = ("pristine", "none")
 DEFAULT_TOL = 1e-4
 # Stage 1 census: which families hold the same structure (structure_class), from step 1.5.
 CENSUS = OUTPUT_ROOT / DEFAULT_DESCRIPTOR / "interface_r8_both_t4" / "distinct_gbs.csv"
@@ -42,10 +53,15 @@ NO_BOUNDARY = ("111/sym00119", "111/sym00175")
 # --------------------------------------------------------------------------- command line
 
 def add_vector_arguments(parser):
+    """The vector options; call resolve_vector_arguments(args) after parsing."""
     group = parser.add_argument_group("which vector")
-    group.add_argument("--descriptor", default=DEFAULT_DESCRIPTOR,
-                       help="descriptor run: a tag under calculations/descriptors/dscribe/standard/ or a "
-                            f"run folder of either region (default {DEFAULT_DESCRIPTOR})")
+    group.add_argument("--descriptor-type", default="soap", choices=DESCRIPTOR_TYPES,
+                       help="soap: DScribe SOAP (calculations/descriptors/dscribe); ace: featomic ACE "
+                            "(calculations/descriptors/ACE), results in calculations/ML_ACE/CoGe (default soap)")
+    group.add_argument("--descriptor", default=None,
+                       help="descriptor run: a tag under the type's standard/ folder or a run folder of either "
+                            f"region (default {DEFAULT_DESCRIPTORS['soap']} for soap, "
+                            f"{DEFAULT_DESCRIPTORS['ace']} for ace)")
     group.add_argument("--kind", default="interface", choices=KINDS,
                        help="interface: atoms within --radius of a plane; nonbulk: atoms whose SOAP differs "
                             "from bulk; global: every atom (default interface)")
@@ -56,8 +72,51 @@ def add_vector_arguments(parser):
     group.add_argument("--thickness", type=thickness_argument, default=4,
                        help="the one thickness used for every GB (default 4, the smallest), or 'all' "
                             "to pool every thickness (krr_classify.py and pooled_duplicates.py only)")
+    group.add_argument("--ace-blocks", nargs="+", default=None, choices=ACE_BLOCKS,
+                       help="ACE only: blocks joined into the vector (default every stored block)")
+    group.add_argument("--ace-scaling", default="pristine", choices=ACE_SCALINGS,
+                       help="ACE only: pristine divides each block by its pristine-bulk length before joining; "
+                            "none joins the raw blocks (default pristine)")
     group.add_argument("--out-dir", type=Path, default=None,
-                       help="default: calculations/ML_dscribe/CoGe/<descriptor tag>/<vector tag>/")
+                       help="default: calculations/ML_dscribe/CoGe/<descriptor tag>/<vector tag>/ "
+                            "(calculations/ML_ACE/CoGe/... for ace)")
+
+
+def resolve_vector_arguments(args, parser=None):
+    """Fill in the default descriptor of the chosen type and check that the options fit the type."""
+    def error(message):
+        if parser is not None:
+            parser.error(message)
+        raise ValueError(message)
+
+    if args.descriptor is None:
+        args.descriptor = DEFAULT_DESCRIPTORS[args.descriptor_type]
+    if args.descriptor_type == "soap" and (args.ace_blocks is not None or args.ace_scaling != "pristine"):
+        error("--ace-blocks and --ace-scaling need --descriptor-type ace")
+    if args.descriptor_type == "ace" and args.kind == "nonbulk":
+        error("ACE runs store no nonbulk vectors; use --kind interface or global")
+    if args.ace_blocks is not None:
+        args.ace_blocks = [name for name in ACE_BLOCKS if name in args.ace_blocks]
+    return args
+
+
+def vector_source(args):
+    """The keyword arguments that pass the descriptor type and ACE options to the loaders."""
+    return {"descriptor_type": args.descriptor_type, "ace_blocks": args.ace_blocks, "ace_scaling": args.ace_scaling}
+
+
+def ace_module():
+    """ace_common, imported on first use."""
+    if str(ACE_SCRIPTS) not in sys.path:
+        sys.path.insert(0, str(ACE_SCRIPTS))
+    import ace_common
+
+    return ace_common
+
+
+def plot_root(descriptor_type="soap"):
+    """plots/CoGe/dim-reduction/SOAP or .../ACE."""
+    return DIMRED_PLOTS / PLOT_FOLDERS[descriptor_type]
 
 
 def thickness_argument(text):
@@ -65,9 +124,16 @@ def thickness_argument(text):
     return "all" if str(text) == "all" else int(text)
 
 
-def descriptor_tag(descriptor):
+def run_dir(region, descriptor, descriptor_type="soap"):
+    """Folder of a descriptor run in one region; tags are looked up in the type's standard/ tree."""
+    if descriptor_type == "ace":
+        return ace_module().run_dir(region, descriptor)
+    return sc.run_dir(region, descriptor)
+
+
+def descriptor_tag(descriptor, descriptor_type="soap"):
     """Folder name of the descriptor run, e.g. rc6.0_n8_l6_s0.5."""
-    return sc.run_dir("both_interfaces", descriptor).resolve().name
+    return run_dir("both_interfaces", descriptor or DEFAULT_DESCRIPTORS[descriptor_type], descriptor_type).resolve().name
 
 
 def region_of(kind):
@@ -86,28 +152,70 @@ def vector_tag(kind, radius, planes, thickness):
     return "_".join(parts)
 
 
+def ace_suffix(ace_blocks=None, ace_scaling="pristine"):
+    """Vector-tag suffix for ACE options other than the default, e.g. _nu2+nu3_odd_noscale."""
+    suffix = ""
+    if ace_blocks is not None and list(ace_blocks) != list(ACE_BLOCKS):
+        suffix += "_" + "+".join(name for name in ACE_BLOCKS if name in ace_blocks)
+    if ace_scaling != "pristine":
+        suffix += "_noscale"
+    return suffix
+
+
 def output_dir(args):
     if args.out_dir is not None:
         return Path(args.out_dir)
-    return (OUTPUT_ROOT / descriptor_tag(args.descriptor)
-            / vector_tag(args.kind, args.radius, args.planes, args.thickness))
+    descriptor_type = getattr(args, "descriptor_type", "soap")
+    tag = vector_tag(args.kind, args.radius, args.planes, args.thickness)
+    if descriptor_type == "ace":
+        tag += ace_suffix(args.ace_blocks, args.ace_scaling)
+    return OUTPUT_ROOTS[descriptor_type] / descriptor_tag(args.descriptor, descriptor_type) / tag
 
 
 def vector_settings(args):
-    return {"descriptor": descriptor_tag(args.descriptor),
-            "descriptor_dir": sc.relative_path(sc.run_dir(region_of(args.kind), args.descriptor)),
-            "kind": args.kind, "radius": args.radius if args.kind == "interface" else None,
-            "planes": args.planes if args.kind != "global" else None, "thickness": args.thickness}
+    descriptor_type = getattr(args, "descriptor_type", "soap")
+    settings = {"descriptor_type": descriptor_type,
+                "descriptor": descriptor_tag(args.descriptor, descriptor_type),
+                "descriptor_dir": sc.relative_path(run_dir(region_of(args.kind), args.descriptor, descriptor_type)),
+                "kind": args.kind, "radius": args.radius if args.kind == "interface" else None,
+                "planes": args.planes if args.kind != "global" else None, "thickness": args.thickness}
+    if descriptor_type == "ace":
+        settings["ace_blocks"] = args.ace_blocks or "all stored"
+        settings["ace_scaling"] = args.ace_scaling
+    return settings
 
 
 # --------------------------------------------------------------------------- vectors
 
-def load_all_vectors(descriptor, kind="interface", radius=8.0, planes="both"):
-    """Every structure of the run: (X as stored, float32; index DataFrame)."""
-    folder = sc.run_dir(region_of(kind), descriptor)
-    name = sc.GLOBAL_FILE if kind == "global" else sc.INTERFACE_FILE
+def _vector_file(folder, kind, descriptor_type):
+    """The run's array file; a clear error when it is missing or belongs to the other descriptor type."""
+    files = {"soap": (sc.GLOBAL_FILE, sc.INTERFACE_FILE), "ace": ("global_ace.npz", "interface_ace.npz")}
+    name = files[descriptor_type][0 if kind == "global" else 1]
     if not (folder / name).is_file():
-        raise FileNotFoundError(f"no {name} in {folder}; run gb_descriptor.py first or pass --descriptor")
+        other = "ace" if descriptor_type == "soap" else "soap"
+        hint = (f"; it holds {other.upper()} vectors, so pass --descriptor-type {other}"
+                if (folder / files[other][0 if kind == "global" else 1]).is_file()
+                else "; run gb_descriptor.py first or pass --descriptor")
+        raise FileNotFoundError(f"no {name} in {folder}{hint}")
+    return folder / name
+
+
+def load_all_vectors(descriptor=None, kind="interface", radius=8.0, planes="both", descriptor_type="soap",
+                     ace_blocks=None, ace_scaling="pristine"):
+    """Every structure of the run: (X float32, as stored for SOAP; index DataFrame).
+
+    ACE vectors are the chosen blocks joined (ace_common.load_gb_vectors), by default each
+    divided by its pristine-bulk length.
+    """
+    descriptor = descriptor or DEFAULT_DESCRIPTORS[descriptor_type]
+    folder = run_dir(region_of(kind), descriptor, descriptor_type)
+    _vector_file(folder, kind, descriptor_type)
+    if descriptor_type == "ace":
+        if kind == "nonbulk":
+            raise ValueError("ACE runs store no nonbulk vectors")
+        X, index = ace_module().load_gb_vectors(folder, kind, radius if kind == "interface" else None, planes,
+                                                ace_blocks, ace_scaling)
+        return X.astype(np.float32), index.reset_index(drop=True)
     X, index = sc.load_gb(folder, kind=kind, radius=radius if kind == "interface" else None, planes=planes)
     return X, index.reset_index(drop=True)
 
@@ -142,9 +250,9 @@ def select_thickness(X, index, thickness, kind="interface", radius=8.0):
     return X, index, notes
 
 
-def load_family_vectors(descriptor, kind="interface", radius=8.0, planes="both", thickness=4):
-    """(X, index, notes): one float64 vector per family at one thickness."""
-    X, index = load_all_vectors(descriptor, kind, radius, planes)
+def load_family_vectors(descriptor=None, kind="interface", radius=8.0, planes="both", thickness=4, **source):
+    """(X, index, notes): one float64 vector per family at one thickness. source: see vector_source()."""
+    X, index = load_all_vectors(descriptor, kind, radius, planes, **source)
     return select_thickness(X, index, thickness, kind, radius)
 
 
@@ -174,18 +282,21 @@ def thickness_noise(X, index, thickness, kind="interface", radius=8.0):
             "p99": float(np.percentile(differences, 99)), "median": float(np.median(differences))}
 
 
-def load_distinct(descriptor=DEFAULT_DESCRIPTOR, kind="interface", radius=8.0, planes="both", thickness=8,
-                  allow_undefined=False):
+def load_distinct(descriptor=None, kind="interface", radius=8.0, planes="both", thickness=8,
+                  allow_undefined=False, descriptor_type="soap", ace_blocks=None, ace_scaling="pristine"):
     """One vector per distinct GB (1,112): the alphabetically first family of each structure class.
 
     Returns (X float64, table, bulk). Rows are in family order, as in select_gbs.py.
     table has family, plane, sym, structure_class, grain_class, handedness and source;
-    bulk is the pristine vector of the same SOAP setting. An undefined vector (a
-    nonbulk vector with no nonbulk atoms) is an error, or with allow_undefined a row of NaN.
+    bulk is the pristine vector of the same descriptor setting (for ACE: the same blocks and
+    scaling). An undefined vector (a nonbulk vector with no nonbulk atoms) is an error, or with
+    allow_undefined a row of NaN. The census of distinct GBs comes from the structure-checked SOAP
+    run and holds for both descriptor types.
     """
     import pandas as pd
 
-    X_all, index_all = load_all_vectors(descriptor, kind, radius, planes)
+    descriptor = descriptor or DEFAULT_DESCRIPTORS[descriptor_type]
+    X_all, index_all = load_all_vectors(descriptor, kind, radius, planes, descriptor_type, ace_blocks, ace_scaling)
     X, index, notes = select_thickness(X_all, index_all, thickness, kind, radius)
     undefined = notes.get("families_with_undefined_vector", [])
     if notes.get("families_without_this_thickness") or (undefined and not allow_undefined):
@@ -201,7 +312,11 @@ def load_distinct(descriptor=DEFAULT_DESCRIPTOR, kind="interface", radius=8.0, p
     rows = rows.merge(labels[["family", "grain_class", "handedness"]], on="family", validate="one_to_one")
     rows = rows.sort_values("family").reset_index(drop=True)
     table = rows[["family", "plane", "sym", "structure_class", "grain_class", "handedness", "source"]]
-    X_bulk, bulk_index = sc.load_bulk(sc.run_dir("global", descriptor))
+    if descriptor_type == "ace":
+        X_bulk, bulk_index = ace_module().load_bulk_vectors(run_dir("global", descriptor, "ace"), ace_blocks,
+                                                            ace_scaling)
+    else:
+        X_bulk, bulk_index = sc.load_bulk(sc.run_dir("global", descriptor))
     bulk = X_bulk[(bulk_index["kind"] == "pristine").to_numpy()][0].astype(np.float64)
     return X[rows["row"].to_numpy()], table, bulk
 

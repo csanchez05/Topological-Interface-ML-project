@@ -27,7 +27,7 @@ node: loading the vectors takes about 1.9 GB, more than the login node has free 
 | `descriptor_sensitivity.py` | Descriptor study part C: which SOAP settings change which GBs look alike; seed and thickness tests |
 | `selection_benchmark.py` | Descriptor study part D: which way of choosing GBs teaches a model most from the fewest |
 | `test_descriptor_study.py` | Unit tests of the three study scripts and the full-space selection helpers |
-| `plot_descriptor_study.py`, `test_plot_descriptor_study.py` | Figures that explain the descriptor study, in `plots/CoGe/dim-reduction/<topic>/`; tests on synthetic study outputs |
+| `plot_descriptor_study.py`, `test_plot_descriptor_study.py` | Figures that explain the descriptor study, in `plots/CoGe/dim-reduction/SOAP/<topic>/`; tests on synthetic study outputs |
 | `geometry_labels.py`, `test_free_labels.py` | Free labels that depend on the shift (shortest distance, overlaps, coordination change) per interface, read from the POSCARs; tests on hand-built cells |
 | `representation_study.py`, `test_representation_study.py` | Fifth study (standard/covariant × interface/whole cell, every map method) and sixth study (12 SOAP settings × 4 representations) |
 | `representation_study.slurm` | Fifth and sixth studies as two whole-node jobs (`--part A`, `--part B`) through `descriptor_grid.py --study representation` |
@@ -52,7 +52,9 @@ the central selection takes the actual member nearest each of 30 K-means
 centroids. The output folder named `median` holds this centroid selection.
 Selections can overlap between lists. Stochastic methods use seed 42 and one thread.
 
-`plots/CoGe/dim-reduction/{FPS,median}/` contains `pca.txt`, `tsne.txt` and
+**Missing since about 2026-10-07:** the kept `FPS/` and `median/` folders are not on disk (cause unknown; found 2026-10-13). An exact copy, whose 18 files match the SHA-256 values in `calculations/ML_dscribe/CoGe/dim-reduction/run.json`, is in `archive/reorganization_20261003/before_edit/plots/CoGe/dim-reduction/{FPS,median}/`; they were left unrestored on purpose, so `select_gbs.py --verify-only` of the default run stops at the first missing file.
+
+`plots/CoGe/dim-reduction/SOAP/{FPS,median}/` contains `pca.txt`, `tsne.txt` and
 `umap.txt`, each with exactly 30 project-relative POSCAR paths, and
 `{method}_{colored,selected}.png`. Colored views use the eight established
 `grain_class` labels from `labels/gb_labels.csv`, with consistent colors and
@@ -94,7 +96,7 @@ Used on 2026-10-07 to refill the [100] list under the 1.8 Å overlap limit (`CLA
   rather than all 1,112 GBs. The rules are otherwise unchanged: seed 42, FPS from bulk, the member nearest
   each k-means centroid, `--n-select` per list (default 30).
 - **Folders.** Without `--plot-dir`/`--out-dir` the outputs go to a tagged subfolder, for example
-  `plots/CoGe/dim-reduction/plane100_dmin1.8/{FPS,median}/` and
+  `plots/CoGe/dim-reduction/SOAP/plane100_dmin1.8/{FPS,median}/` and
   `calculations/ML_dscribe/CoGe/dim-reduction/plane100_dmin1.8/`.
 - **What changes in the outputs.** The figures carry a title naming the subset, and their legends list
   only the grain classes present. `run.json` records the filter under `subset`.
@@ -434,7 +436,7 @@ GBs may be labelled and see which way of choosing them learns fastest (part D).
   for every pick set and for the six existing lists. FPS and random curves for every grid setting.
 - The covariant SOAP run (reference setting) is part of the same job; it is not used in C or D.
 - **Figures**: the last task of the job runs `plot_descriptor_study.py`, which only reads the outputs
-  above and writes one folder per question into `plots/CoGe/dim-reduction/` (`descriptor_settings/`,
+  above and writes one folder per question into `plots/CoGe/dim-reduction/SOAP/` (`descriptor_settings/`,
   `maps_by_setting/`, `seed_stability/`, `thickness/`, `selection/`, `covariant/`; what each figure
   shows is in that folder's README). It leaves `select_gbs.py`'s `FPS/` and `median/` alone.
   Four of its figures reuse the analyses' own drawing code: `descriptor_sensitivity.draw_sensitivity`
@@ -477,7 +479,7 @@ calculations/ML_dscribe/CoGe/selection_benchmark/
   learning_curves.csv, coverage.csv, summary.csv, existing_lists.csv, picks.csv, summary.json,
   maps.npz (select_gbs.py's maps with families and labels),
   learning_curves.png, coverage.png, descriptor_efficiency.png
-plots/CoGe/dim-reduction/
+plots/CoGe/dim-reduction/SOAP/
   descriptor_settings/, maps_by_setting/, seed_stability/, thickness/, selection/, covariant/
 ```
 

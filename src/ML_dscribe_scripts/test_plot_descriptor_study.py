@@ -264,7 +264,7 @@ class Helpers(unittest.TestCase):
         root = pds.sc.PROJECT_ROOT
         real = [root / "calculations" / "ML_dscribe" / "CoGe" / "descriptor_sensitivity"]
         smoke = [root / "archive" / "descriptor_study_20261003" / "smoke" / "descriptor_sensitivity_v2"]
-        for out in (root / "plots" / "CoGe" / "dim-reduction", root / "results" / "dscribe"):
+        for out in (pds.mc.plot_root("soap"), root / "results" / "dscribe"):
             self.assertIsNone(pds.refusal(out, "", real))
             self.assertIn("--title-prefix", pds.refusal(out, "SMOKE TEST", real))
             self.assertIn("archive/", pds.refusal(out, "", smoke))

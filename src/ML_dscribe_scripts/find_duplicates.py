@@ -9,7 +9,8 @@ rotation, mirror or inversion, to see whether the members really are one
 structure built several times.
 
 Rerun on another descriptor with --descriptor <tag or folder>; compare two
-runs with compare_duplicates.py.
+runs with compare_duplicates.py. --descriptor-type ace uses the ACE vectors
+(src/ACE/CoGe) instead of SOAP, and writes into calculations/ML_ACE/CoGe/.
 
 Outputs, in calculations/ML_dscribe/CoGe/<descriptor tag>/<vector tag>/:
   distinct_gbs.csv         every family with its distinct-GB number
@@ -94,7 +95,8 @@ def single_interface_count(args, families):
     """Distinct single interfaces: the edge and mid vectors of every cell, grouped together."""
     stacked, owner = [], []
     for plane in sc.PLANE_NAMES:
-        X, index, _ = mc.load_family_vectors(args.descriptor, args.kind, args.radius, plane, args.thickness)
+        X, index, _ = mc.load_family_vectors(args.descriptor, args.kind, args.radius, plane, args.thickness,
+                                             **mc.vector_source(args))
         keep = index["family"].isin(families).to_numpy()
         stacked.append(X[keep])
         owner.extend((family, plane) for family in index.loc[keep, "family"])
@@ -134,12 +136,13 @@ def main():
                         help="also count distinct single interfaces (edge and mid vectors pooled); "
                              "needs two more passes over the descriptor file")
     args = parser.parse_args()
+    mc.resolve_vector_arguments(args, parser)
     if args.thickness == "all":
         parser.error("find_duplicates.py works on one thickness; use pooled_duplicates.py for --thickness all")
     import pandas as pd
 
     started = time.time()
-    X_all, index_all = mc.load_all_vectors(args.descriptor, args.kind, args.radius, args.planes)
+    X_all, index_all = mc.load_all_vectors(args.descriptor, args.kind, args.radius, args.planes, **mc.vector_source(args))
     noise = mc.thickness_noise(X_all, index_all, args.thickness, args.kind, args.radius)
     X, index, notes = mc.select_thickness(X_all, index_all, args.thickness, args.kind, args.radius)
     del X_all
@@ -333,7 +336,7 @@ def main():
 
     # ---- report
     print(f"{len(family)} families at {args.thickness}x, vector {mc.vector_tag(args.kind, args.radius, args.planes, args.thickness)}, "
-          f"descriptor {mc.descriptor_tag(args.descriptor)}")
+          f"descriptor {args.descriptor_type} {mc.descriptor_tag(args.descriptor, args.descriptor_type)}")
     if noise:
         print(f"thickness noise of one family's vector: max {noise['max']:.1e}, median {noise['median']:.1e}; "
               f"tolerance {args.tol:g}")

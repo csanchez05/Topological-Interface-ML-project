@@ -143,7 +143,7 @@ Caveats:
   - The result is real: 0.47–0.54 in the benchmark, and 0.55 against a 0.46 majority in the
     Stage 1 KRR.
   - Corrected on 2026-10-05 in `results/dscribe/descriptor_study.md` (section 4) and
-    `plots/CoGe/dim-reduction/README.md`. The originals are in `archive/grain_class_20261005/before_edit/`.
+    `plots/CoGe/dim-reduction/SOAP/README.md`. The originals are in `archive/grain_class_20261005/before_edit/`.
 
 ## 6. Open points
 

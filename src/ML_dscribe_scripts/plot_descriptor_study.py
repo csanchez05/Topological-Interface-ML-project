@@ -3,7 +3,7 @@
 
 Reads the outputs of descriptor_sensitivity.py, selection_benchmark.py, the covariant run,
 geometry_labels.py, krr_classify.py --regression and representation_study.py (no new computation
-beyond small re-alignments of stored maps) and writes into plots/CoGe/dim-reduction/:
+beyond small re-alignments of stored maps) and writes into plots/CoGe/dim-reduction/SOAP/:
 
   descriptor_settings/   which SOAP setting changes which GBs look alike (part C)
       knob_trends.png          each score against the value of r_cut, n_max, l_max, sigma
@@ -81,7 +81,7 @@ import ml_common as mc
 import selection_benchmark as sb
 from ml_common import sc
 
-OUT_DIR = sc.PROJECT_ROOT / "plots" / "CoGe" / "dim-reduction"
+OUT_DIR = mc.plot_root("soap")
 SENSITIVITY_DIR = mc.OUTPUT_ROOT / "descriptor_sensitivity"
 BENCHMARK_DIR = mc.OUTPUT_ROOT / "selection_benchmark"
 COVARIANT_DIR = sc.COVARIANT_ROOT / "both_interfaces" / ds.soap_tag(ds.REFERENCE)

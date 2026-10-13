@@ -42,7 +42,7 @@ distance to the nearest pick, both divided by the median distance between GBs;
 plane x grain-class groups covered.
 
 Existing lists: the same scores, and the accuracy on all other GBs, for the six lists of
-30 (plots/CoGe/dim-reduction/{FPS,median}/{pca,tsne,umap}.txt), their union, and 30
+30 (plots/CoGe/dim-reduction/SOAP/{FPS,median}/{pca,tsne,umap}.txt), their union, and 30
 picks of every strategy taken from all GBs.
 
 Descriptor comparison: fps and random curves for every setting of
@@ -76,7 +76,7 @@ import ml_common as mc
 from ml_common import sc
 
 OUT_DIR = mc.OUTPUT_ROOT / "selection_benchmark_v2"
-EXISTING_DIR = mc.PROJECT_ROOT / "plots" / "CoGe" / "dim-reduction"
+EXISTING_DIR = mc.plot_root("soap")
 SIZES = (5, 10, 15, 20, 30, 40, 60, 80, 100)
 N_SPLITS = 10
 N_TEST = 222

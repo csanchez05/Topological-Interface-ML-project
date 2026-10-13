@@ -17,6 +17,9 @@ POSCARs (the structure_class column of a find_duplicates.py --structure-census
 run), so this script does no atom-by-atom comparison of its own: cells of
 different thickness cannot be compared that way.
 
+--descriptor-type ace uses the ACE vectors and writes into calculations/ML_ACE/CoGe/; the
+structure classes stay those of the SOAP census (they come from the POSCARs).
+
 Outputs, in calculations/ML_dscribe/CoGe/<descriptor tag>/<vector tag>/:
   pooled_families.csv      one row per family
   pooled_merges.csv        pairs of families of different structure that share a vector group
@@ -117,12 +120,14 @@ def main():
                         help="distinct_gbs.csv of a find_duplicates.py --structure-census run; its structure_class "
                              "column says which families are the same structure")
     args = parser.parse_args()
+    mc.resolve_vector_arguments(args, parser)
     if args.thickness != "all":
         parser.error("pooled_duplicates.py always uses every thickness; use find_duplicates.py for one")
     import pandas as pd
 
     started = time.time()
-    X, index, notes = mc.load_family_vectors(args.descriptor, args.kind, args.radius, args.planes, "all")
+    X, index, notes = mc.load_family_vectors(args.descriptor, args.kind, args.radius, args.planes, "all",
+                                             **mc.vector_source(args))
     if len(index) == 0:
         parser.error(f"no structure in {args.descriptor}")
     family_code, families = pd.factorize(index["family"])

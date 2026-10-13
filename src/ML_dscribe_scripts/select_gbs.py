@@ -1,13 +1,19 @@
-"""Select 30 distinct CoGe GBs in each of three two-dimensional SOAP maps.
+"""Select 30 distinct CoGe GBs in each of three two-dimensional SOAP (or ACE) maps.
 
 Run from the project root in src/mlenv, or pass --verify-only to check an
 existing run without fitting the embeddings again. The historical output
 folder name 'median' means the actual member nearest a K-means centroid.
 
+--descriptor-type ace maps the ACE vectors of src/ACE/CoGe (default run
+rc6.0_n8_l6_s0.5_nu3-n4-l4, all blocks, each divided by its pristine-bulk length;
+--ace-blocks / --ace-scaling change that) instead of SOAP. Its default folders are
+plots/CoGe/dim-reduction/ACE/ and calculations/ML_ACE/CoGe/dim-reduction/. The
+distinct GBs are the same 1,112 in both cases (structure census).
+
 Subset selection (--planes, --min-pair, --n-select): only the GBs of the given
 planes whose closest pair of atoms at 8x is >= --min-pair (from the overlap
 survey) are embedded, together with pristine bulk, and sampled. The default
-folders then get a tag, e.g. plots/CoGe/dim-reduction/plane100_dmin1.8/, so
+folders then get a tag, e.g. plots/CoGe/dim-reduction/SOAP/plane100_dmin1.8/, so
 the Stage 2 lists are never overwritten. --dry-run only counts the subset.
 
   python -B src/ML_dscribe_scripts/select_gbs.py --planes 100 --min-pair 1.8 --dry-run
@@ -35,8 +41,11 @@ DESCRIPTOR = "rc6.0_n8_l6_s0.5"
 THICKNESS = 8
 CENSUS = mc.OUTPUT_ROOT / DESCRIPTOR / "interface_r8_both_t4" / "distinct_gbs.csv"
 GB_LABELS = mc.LABELS_DIR / "gb_labels.csv"
-PLOT_DIR = ROOT / "plots" / "CoGe" / "dim-reduction"
+PLOT_DIR = mc.plot_root("soap")
 OUT_DIR = mc.OUTPUT_ROOT / "dim-reduction"
+# Default folders per descriptor type (the SOAP ones are PLOT_DIR and OUT_DIR).
+PLOT_DIRS = {kind: mc.plot_root(kind) for kind in mc.DESCRIPTOR_TYPES}
+OUT_DIRS = {kind: mc.OUTPUT_ROOTS[kind] / "dim-reduction" for kind in mc.DESCRIPTOR_TYPES}
 SURVEY = ROOT / "results" / "CoGe_interface" / "overlap_survey.tsv"
 METHODS = ("pca", "tsne", "umap")
 SAMPLERS = ("FPS", "median")
@@ -150,6 +159,26 @@ def subset_title(subset):
     return f"{planes} GBs{limit} ({subset['distinct_gbs']} distinct)"
 
 
+def default_folders(descriptor_type, descriptor_tag, ace_blocks, ace_scaling, planes, min_pair, n_select):
+    """(plot folder, output folder) of a selection.
+
+    The Stage 2 default (SOAP rc6.0_n8_l6_s0.5, all planes, 30 per list) and the default ACE vector use
+    the type's root folders; any other descriptor, block choice, scaling or subset adds a tag, so a
+    selection never overwrites another one.
+    """
+    parts = []
+    if descriptor_type == "ace":
+        if descriptor_tag != mc.DEFAULT_DESCRIPTORS["ace"]:
+            parts.append(descriptor_tag)
+        parts.append(mc.ace_suffix(ace_blocks, ace_scaling).lstrip("_"))
+    elif descriptor_tag != DESCRIPTOR:
+        parts.append(descriptor_tag)
+    parts.append(selection_tag(planes, min_pair, n_select) or "")
+    tag = "_".join(part for part in parts if part)
+    plot_root, out_root = PLOT_DIRS[descriptor_type], OUT_DIRS[descriptor_type]
+    return (plot_root / tag, out_root / tag) if tag else (plot_root, out_root)
+
+
 def existing_outputs(plot_dir, out_dir):
     """Files of an earlier selection in the target folders."""
     paths = [Path(out_dir) / name for name in ("run.json", "structures.csv", "embeddings.npz", "sample_list.csv")]
@@ -223,25 +252,36 @@ def cluster_centers(points, families, seed, count=N_SELECT):
     return selected, labels, model.cluster_centers_, model.get_params(deep=False)
 
 
-def load_dataset(planes=sc.PLANES, min_pair=None, survey_path=SURVEY):
+def load_dataset(planes=sc.PLANES, min_pair=None, survey_path=SURVEY, descriptor_type="soap", descriptor=None,
+                 ace_blocks=None, ace_scaling="pristine"):
     """Vectors of the distinct 8x GBs plus pristine bulk (last row). With a plane or closest-pair
-    filter only the GBs that pass are kept; `subset` describes the filter (None without one)."""
+    filter only the GBs that pass are kept; `subset` describes the filter (None without one).
+    The settings returned are the descriptor settings of the run (its "soap" or "ace" entry)."""
     import pandas as pd
 
-    gb_dir = sc.run_dir("both_interfaces", DESCRIPTOR)
-    bulk_dir = sc.run_dir("global", DESCRIPTOR)
+    descriptor = descriptor or mc.DEFAULT_DESCRIPTORS[descriptor_type]
+    gb_dir = mc.run_dir("both_interfaces", descriptor, descriptor_type)
+    bulk_dir = mc.run_dir("global", descriptor, descriptor_type)
+    if descriptor_type == "ace":
+        ac = mc.ace_module()
+        files = (ac.INTERFACE_FILE, ac.BULK_FILE)
+        code = [Path(sc.__file__), Path(ac.__file__)]
+    else:
+        files = (sc.INTERFACE_FILE, "bulk_soap.npz")
+        code = [Path(sc.__file__)]
     inputs = [folder / name for folder, names in (
-        (gb_dir, ("settings.json", "index.csv", sc.INTERFACE_FILE)),
-        (bulk_dir, ("bulk_settings.json", "bulk_index.csv", "bulk_soap.npz"))) for name in names]
-    inputs += [CENSUS, GB_LABELS, Path(__file__), Path(mc.__file__), Path(sc.__file__)]
+        (gb_dir, ("settings.json", "index.csv", files[0])),
+        (bulk_dir, ("bulk_settings.json", "bulk_index.csv", files[1]))) for name in names]
+    inputs += [CENSUS, GB_LABELS, Path(__file__), Path(mc.__file__)] + code
     if min_pair is not None:
         inputs.append(Path(survey_path))
     hashes = {sc.relative_path(path): fingerprint(path) for path in inputs}
     gb_settings = json.loads((gb_dir / "settings.json").read_text())
     bulk_settings = json.loads((bulk_dir / "bulk_settings.json").read_text())
-    if gb_settings["soap"] != bulk_settings["soap"]:
-        raise ValueError("bulk and GB SOAP settings do not match")
-    X, index, notes = mc.load_family_vectors(DESCRIPTOR, "interface", 8.0, "both", THICKNESS)
+    if gb_settings[descriptor_type] != bulk_settings[descriptor_type]:
+        raise ValueError(f"bulk and GB {descriptor_type.upper()} settings do not match")
+    source = {"descriptor_type": descriptor_type, "ace_blocks": ace_blocks, "ace_scaling": ace_scaling}
+    X, index, notes = mc.load_family_vectors(descriptor, "interface", 8.0, "both", THICKNESS, **source)
     if notes:
         raise ValueError(f"{THICKNESS}x catalogue is incomplete or too thin: {notes}")
     census = pd.read_csv(CENSUS, dtype={"plane": str})
@@ -254,9 +294,19 @@ def load_dataset(planes=sc.PLANES, min_pair=None, survey_path=SURVEY):
         raise ValueError("a structure census class contains conflicting grain-class labels")
     positions, index = representative_rows(index, census)
     X = X[positions]
-    if len(census) != 1541 or len(index) != 1112 or X.shape != (1112, 1904):
+    if descriptor_type == "soap" and descriptor == DESCRIPTOR:
+        width = 1904
+    elif descriptor_type == "soap":
+        width = gb_settings["vector_length"]
+    else:
+        width = sum(length for name, length in gb_settings["vector_length"].items()
+                    if ace_blocks is None or name in ace_blocks)
+    if len(census) != 1541 or len(index) != 1112 or X.shape != (1112, width):
         raise ValueError("the stored catalogue no longer matches the validated Stage 1 dataset")
-    bulk_X, bulk_index = sc.load_bulk(DESCRIPTOR)
+    if descriptor_type == "ace":
+        bulk_X, bulk_index = mc.ace_module().load_bulk_vectors(bulk_dir, ace_blocks, ace_scaling)
+    else:
+        bulk_X, bulk_index = sc.load_bulk(descriptor)
     pristine = np.flatnonzero(bulk_index["kind"].to_numpy() == "pristine")
     if len(pristine) != 1 or bulk_X.shape[1] != X.shape[1]:
         raise ValueError("expected one pristine bulk vector matching the GB feature layout")
@@ -290,8 +340,8 @@ def load_dataset(planes=sc.PLANES, min_pair=None, survey_path=SURVEY):
             raise ValueError(f"missing or empty structure: {source}")
     vectors = np.vstack((X, bulk_X[pristine]))
     if not np.isfinite(vectors).all():
-        raise ValueError("nonfinite SOAP features")
-    return vectors, table, census, hashes, gb_settings["soap"], subset
+        raise ValueError(f"nonfinite {descriptor_type.upper()} features")
+    return vectors, table, census, hashes, gb_settings[descriptor_type], subset
 
 
 def embed(vectors, method, seed):
@@ -523,9 +573,16 @@ def verify_outputs(plot_dir, out_dir, manifest):
 
 def run(args):
     started = time.monotonic()
-    print("Reading validated SOAP descriptors and structure census...", flush=True)
-    vectors, table, census, hashes, soap, subset = load_dataset(args.planes, args.min_pair, args.overlap_survey)
+    print(f"Reading validated {args.descriptor_type.upper()} descriptors and structure census...", flush=True)
+    vectors, table, census, hashes, settings, subset = load_dataset(
+        args.planes, args.min_pair, args.overlap_survey, args.descriptor_type, args.descriptor,
+        args.ace_blocks, args.ace_scaling)
     title = None if subset is None else subset_title(subset)
+    if args.descriptor_type == "ace":
+        # ACE maps say so on the figure; the SOAP maps keep their established look.
+        label = (f"ACE {args.descriptor_tag}" + (f", blocks {'+'.join(args.ace_blocks)}" if args.ace_blocks else "")
+                 + (", unscaled blocks" if args.ace_scaling == "none" else ""))
+        title = label if title is None else f"{label}; {title}"
     if subset is not None:
         print(f"Subset: {title}; {subset['families']} catalogue families.", flush=True)
     families = table.iloc[:-1]["family"].to_numpy()
@@ -554,8 +611,8 @@ def run(args):
     manifest = {
         "created_at": datetime.now(timezone.utc).isoformat(), "command": sys.argv,
         "seed": args.seed, "threads": 1, "n_select": args.n_select, "n_families": len(census),
-        "n_distinct_gbs": len(families), "bulk_row": len(families), "soap": soap,
-        "vector": {"descriptor": DESCRIPTOR, "bulk_descriptor": DESCRIPTOR,
+        "n_distinct_gbs": len(families), "bulk_row": len(families), args.descriptor_type: settings,
+        "vector": {"descriptor": args.descriptor_tag, "bulk_descriptor": args.descriptor_tag,
                    "kind": "interface", "radius": 8.0,
                    "planes": "both", "thickness": THICKNESS, "feature_scaling": "none"},
         "deduplication": "structure_class census; alphabetically first family per class",
@@ -575,6 +632,9 @@ def run(args):
         "versions": {package: metadata.version(package) for package in (
             "numpy", "scipy", "pandas", "scikit-learn", "umap-learn", "numba", "matplotlib", "pillow")}}
     manifest["versions"]["python"] = sys.version.split()[0]
+    if args.descriptor_type == "ace":
+        manifest["vector"].update(descriptor_type="ace", ace_blocks=args.ace_blocks or "all stored",
+                                  ace_scaling=args.ace_scaling)
     if subset is not None:
         manifest["subset"] = subset
     print("Writing six plain text lists and twelve plots...", flush=True)
@@ -644,10 +704,20 @@ def dry_run(args):
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
+    parser.add_argument("--descriptor-type", choices=mc.DESCRIPTOR_TYPES, default="soap",
+                        help="soap (default) or ace: which descriptor the maps are built from")
+    parser.add_argument("--descriptor", default=None,
+                        help=f"descriptor run, tag or folder (default {mc.DEFAULT_DESCRIPTORS['soap']} for soap, "
+                             f"{mc.DEFAULT_DESCRIPTORS['ace']} for ace)")
+    parser.add_argument("--ace-blocks", nargs="+", choices=mc.ACE_BLOCKS, default=None,
+                        help="ACE only: blocks joined into the vector (default every stored block)")
+    parser.add_argument("--ace-scaling", choices=mc.ACE_SCALINGS, default="pristine",
+                        help="ACE only: pristine (default) divides each block by its pristine-bulk length; none")
     parser.add_argument("--plot-dir", type=Path, default=None,
-                        help="default plots/CoGe/dim-reduction, plus /<tag> for a subset")
+                        help="default plots/CoGe/dim-reduction/SOAP (ACE: .../ACE), plus /<tag> for a subset")
     parser.add_argument("--out-dir", type=Path, default=None,
-                        help="default calculations/ML_dscribe/CoGe/dim-reduction, plus /<tag> for a subset")
+                        help="default calculations/ML_dscribe/CoGe/dim-reduction (ACE: calculations/ML_ACE/CoGe/"
+                             "dim-reduction), plus /<tag> for a subset")
     parser.add_argument("--seed", type=int, default=42)
     parser.add_argument("--selected-background", choices=("gray", "grain_class"), default="gray",
                         help="background colors in selection views (default gray)")
@@ -667,9 +737,16 @@ def main():
     if args.n_select < 1:
         parser.error("--n-select must be at least 1")
     args.planes = sorted(set(args.planes))
-    tag = selection_tag(args.planes, args.min_pair, args.n_select)
-    args.plot_dir = project_path(args.plot_dir) if args.plot_dir else PLOT_DIR / tag if tag else PLOT_DIR
-    args.out_dir = project_path(args.out_dir) if args.out_dir else OUT_DIR / tag if tag else OUT_DIR
+    if args.descriptor_type == "soap" and (args.ace_blocks is not None or args.ace_scaling != "pristine"):
+        parser.error("--ace-blocks and --ace-scaling need --descriptor-type ace")
+    if args.ace_blocks is not None:
+        args.ace_blocks = [name for name in mc.ACE_BLOCKS if name in args.ace_blocks]
+    args.descriptor = args.descriptor or mc.DEFAULT_DESCRIPTORS[args.descriptor_type]
+    args.descriptor_tag = mc.descriptor_tag(args.descriptor, args.descriptor_type)
+    plot_dir, out_dir = default_folders(args.descriptor_type, args.descriptor_tag, args.ace_blocks, args.ace_scaling,
+                                        args.planes, args.min_pair, args.n_select)
+    args.plot_dir = project_path(args.plot_dir) if args.plot_dir else plot_dir
+    args.out_dir = project_path(args.out_dir) if args.out_dir else out_dir
     args.overlap_survey = project_path(args.overlap_survey)
     if args.dry_run:
         dry_run(args)
