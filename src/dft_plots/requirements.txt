@@ -1,0 +1,8 @@
+# Python 3.10 plotting environment; resolved versions recorded in requirements-lock.txt.
+numpy
+matplotlib
+pymatgen
+pyprocar==6.5.0
+pyvista==0.46.3
+pandas
+pillow

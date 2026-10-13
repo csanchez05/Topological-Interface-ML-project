@@ -1,0 +1,7 @@
+.venv/
+.bootstrap/
+.cache/
+.tmp/
+models/
+__pycache__/
+setup.log

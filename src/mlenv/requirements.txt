@@ -1,0 +1,12 @@
+# Python 3.10 SOAP/ML environment; resolved versions recorded in requirements-lock.txt.
+dscribe
+ase
+scikit-learn
+umap-learn
+numpy
+scipy
+pandas
+matplotlib
+featomic
+skmatter
+pacmap

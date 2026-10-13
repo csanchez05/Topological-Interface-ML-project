@@ -1,0 +1,8 @@
+CoGe bulk work — 12 September 2026
+
+All 623 structure pairs (1,246 selected SCFs) validated; original results preserved.
+DOS/band representative checks passed; the full batch was submitted using CPU VASP 6.4.3, six MPI ranks.
+595 DOS/band results were recorded complete before recovery.
+Corrected CHGCAR rounding validation and the SOC inactivity timeout; scientific settings unchanged.
+Recovery arrays 9774/9775 resume only missing stages, DOS then bands, reusing completed outputs. Final audit: 9776.
+Non-SOC LMAXMIX=4 refreshes remain required. LWRITE_SPN is deferred.

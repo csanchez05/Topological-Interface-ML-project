@@ -1,0 +1,39 @@
+# Uni-HamGNN / HamGNN 2.3.0, Python 3.10 on Linux x86_64, CPU environment.
+--extra-index-url https://download.pytorch.org/whl/cpu
+--find-links https://data.pyg.org/whl/torch-2.5.0+cpu.html
+torch==2.5.0+cpu
+torch-geometric==2.6.1
+pyg-lib==0.4.0+pt25cpu
+torch-scatter==2.1.2+pt25cpu
+torch-sparse==0.6.18+pt25cpu
+torch-cluster==1.6.3+pt25cpu
+torch-spline-conv==1.2.2+pt25cpu
+e3nn==0.5.0
+lightning>=2.5,<2.6
+pytorch-lightning>=2.5,<2.6
+numpy==1.26.4
+scipy==1.14.1
+pymatgen==2024.6.10
+sympy==1.13.1
+# Runtime dependencies used by the predictor and bundled MACE/NequIP modules.
+ase
+easydict
+PyYAML
+natsort
+numba
+lmdb
+tqdm
+tensorboard
+matplotlib
+pandas
+scikit-learn
+opt-einsum
+opt-einsum-fx
+torch-runstats
+torch-ema
+torch-dftd
+prettytable
+packaging
+seekpath
+h5py
+-e ./source

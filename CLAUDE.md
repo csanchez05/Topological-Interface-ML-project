@@ -141,8 +141,9 @@ in `notes/interface_100_convergence_20261005.md`):
 - The production ENCUT and k-mesh come from the sweep; the user confirms them.
 
 Everything else is **not decided. Ask; do not invent or copy bulk values silently.** Open questions:
-- whether to refill the [100] list (13 cells left) from the 114 [100] catalogue families above the
-  overlap limit, e.g. by rerunning the Stage 2 selection on those only
+- which [100] cells to run beyond the 13: the Stage 2 selection rerun on the clean [100] GBs only
+  (2026-10-07; 114 families = 70 distinct GBs) picks 63 of the 70 in its six lists of 30
+  (`calculations/ML_dscribe/CoGe/dim-reduction/plane100_dmin1.8/sample_list.csv`), so it barely selects
 - the 110/111 Stage 2 cells: only 1 [110] and 1 [111] of the list clear the overlap limit
 - relaxation, if ever: ISIF, IBRION, EDIFFG, NSW, selective dynamics, ENCUT (Pulay stress)
 - MAGMOM start and SAXIS for the GB SOC runs (bulk SAXIS `0 0 1` is an in-plane axis of the GB cell)
@@ -178,7 +179,7 @@ and must not be reused:
 | Stage | Content | Status |
 |---|---|---|
 | 1 | 1.1 SOAP of pristine + 1,541 bulk cells · 1.2 bulk invariance check · 1.3 GB descriptors (13,868) · 1.4 KRR GB vector → plane and operation · 1.5 coinciding vectors / distinct GBs (then raise n_max, l_max) · r_cut scan 4–12 Å | Done at r_cut 6: plane 0.999, grain class 0.49 (baseline 0.19), 1,112 distinct GBs. Scan on all thicknesses: same conclusions. Code: `src/dscribe/CoGe/`, `src/ML_dscribe_scripts/` |
-| 2 | KRR GB vector → GB energy, from VASP relaxations of FPS-chosen GBs; E_GB = (E_cell − n·ε_bulk) / (2A), two interfaces per cell | Selection done (`select_gbs.py`): six lists of 30 GBs (FPS and median, each in PCA, t-SNE and UMAP), in `plots/CoGe/dim-reduction/`. Their union, 162 8x POSCARs, is `results/dscribe/total_sample_list.csv`. Overlap limit 1.8 Å (2026-10-06) leaves 13 of the 66 [100], 1 of 63 [110] and 1 of 33 [111] cells. VASP: [100] ENCUT/k sweep on 4 GBs, unrelaxed: v0.1.0 (2026-10-05) failed (sloshing; divergence at 0.77 Å), v0.2.0 with damped mixing (2026-10-06) awaits its first full test; production not started. |
+| 2 | KRR GB vector → GB energy, from VASP relaxations of FPS-chosen GBs; E_GB = (E_cell − n·ε_bulk) / (2A), two interfaces per cell | Selection done (`select_gbs.py`): six lists of 30 GBs (FPS and median, each in PCA, t-SNE and UMAP), in `plots/CoGe/dim-reduction/`. Their union, 162 8x POSCARs, is `results/dscribe/total_sample_list.csv`. Overlap limit 1.8 Å (2026-10-06) leaves 13 of the 66 [100], 1 of 63 [110] and 1 of 33 [111] cells. [100] refill (2026-10-07, `select_gbs.py --planes 100 --min-pair 1.8`): 63 of the 70 clean distinct [100] GBs, in `plots/CoGe/dim-reduction/plane100_dmin1.8/`. VASP: [100] ENCUT/k sweep on 4 GBs, unrelaxed: v0.1.0 (2026-10-05) failed (sloshing; divergence at 0.77 Å), v0.2.0 with damped mixing (2026-10-06) awaits its first full test; production not started. |
 | 3 | KRR GB vector → vectorized SOC spin texture (PROCAR σx/σy/σz) | Not started |
 | 4 | PCA/UMAP anomaly map, bulk at the origin; isolated GBs are candidates | Not started |
 

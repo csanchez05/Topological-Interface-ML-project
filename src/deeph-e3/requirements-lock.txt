@@ -1,0 +1,88 @@
+# DeepH-E3 source: 036bf95b996052ef778c5c38e3c54c2ac0e2b591
+# CPython 3.9.25 / Linux x86_64 CPU environment
+--extra-index-url https://download.pytorch.org/whl/cpu
+--find-links https://data.pyg.org/whl/torch-1.9.0+cpu.html
+absl-py==2.3.1
+certifi==2026.7.22
+cffi==2.0.0
+charset-normalizer==3.5.1
+contourpy==1.3.0
+cryptography==50.0.1
+cycler==0.12.1
+dill==0.4.1
+e3nn==0.3.5
+fonttools==4.60.2
+google-auth==2.50.0
+google-auth-oauthlib==0.4.6
+googledrivedownloader==0.4
+grpcio==1.80.0
+h5py==3.14.0
+idna==3.20
+importlib_metadata==8.7.1
+importlib_resources==6.5.2
+isodate==0.7.2
+Jinja2==3.1.6
+joblib==1.5.3
+kiwisolver==1.4.7
+latexcodec==3.0.1
+Markdown==3.9
+MarkupSafe==3.0.3
+matplotlib==3.9.4
+monty==2025.3.3
+mpmath==1.3.0
+multiprocess==0.70.19
+narwhals==2.21.0
+networkx==3.2.1
+numpy==1.26.4
+oauthlib==3.3.1
+opt-einsum-fx==0.1.4
+opt_einsum==3.4.0
+packaging==26.3
+palettable==3.3.3
+pandas==2.3.3
+pathos==0.3.5
+pillow==11.3.0
+pip==25.3
+plotly==7.1.0
+pox==0.3.7
+ppft==1.7.8
+protobuf==3.19.6
+pyasn1==0.6.4
+pyasn1_modules==0.4.2
+pybtex==0.26.1
+pycparser==2.23
+pymatgen==2024.6.10
+pyparsing==3.3.3
+python-dateutil==2.9.0.post0
+python-louvain==0.16
+pytz==2026.4
+PyYAML==6.0.3
+rdflib==7.6.0
+requests==2.32.5
+requests-oauthlib==2.0.0
+ruamel.yaml==0.19.1
+scikit-learn==1.6.1
+scipy==1.13.1
+setuptools==59.5.0
+six==1.17.0
+spglib==2.7.0
+sympy==1.14.0
+tabulate==0.9.0
+tensorboard==2.10.1
+tensorboard-data-server==0.6.1
+tensorboard-plugin-wit==1.8.1
+threadpoolctl==3.7.0
+torch==1.9.0+cpu
+torch-cluster @ https://data.pyg.org/whl/torch-1.9.0%2Bcpu/torch_cluster-1.5.9-cp39-cp39-linux_x86_64.whl#sha256=4514bcc28a8a29ae62e5462cbb18c0996df93f82bb668f28717f08c12c20b794
+torch-geometric==1.7.2
+torch-scatter @ https://data.pyg.org/whl/torch-1.9.0%2Bcpu/torch_scatter-2.0.9-cp39-cp39-linux_x86_64.whl#sha256=c52312a549a4834ec0a9b3c6dc3e53bacaf610f73f7947d497d9f0cc4c93ec3d
+torch-sparse @ https://data.pyg.org/whl/torch-1.9.0%2Bcpu/torch_sparse-0.6.12-cp39-cp39-linux_x86_64.whl#sha256=6136a780a467aadd9ab7830b899bb546f3513978a0579247d28464afa347803a
+torch-spline-conv @ https://data.pyg.org/whl/torch-1.9.0%2Bcpu/torch_spline_conv-1.2.1-cp39-cp39-linux_x86_64.whl#sha256=f2fe04b8057e301ac0318ad13e044ef8ed7b8cd61aa66dcdd71ddc023daecd7a
+tqdm==4.70.1
+typing_extensions==4.16.0
+tzdata==2026.4
+uncertainties==3.2.3
+urllib3==2.6.3
+Werkzeug==3.1.8
+wheel==0.45.1
+zipp==3.23.1

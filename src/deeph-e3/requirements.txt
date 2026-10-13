@@ -1,0 +1,23 @@
+# DeepH-E3: Python 3.9 / Linux x86_64, upstream's CPU dependency stack.
+--extra-index-url https://download.pytorch.org/whl/cpu
+--find-links https://data.pyg.org/whl/torch-1.9.0+cpu.html
+torch==1.9.0+cpu
+torch-geometric==1.7.2
+# torch-geometric 1.7.2 imports the original google_drive_downloader module.
+googledrivedownloader==0.4
+torch-scatter @ https://data.pyg.org/whl/torch-1.9.0%2Bcpu/torch_scatter-2.0.9-cp39-cp39-linux_x86_64.whl
+torch-sparse @ https://data.pyg.org/whl/torch-1.9.0%2Bcpu/torch_sparse-0.6.12-cp39-cp39-linux_x86_64.whl
+torch-cluster @ https://data.pyg.org/whl/torch-1.9.0%2Bcpu/torch_cluster-1.5.9-cp39-cp39-linux_x86_64.whl
+torch-spline-conv @ https://data.pyg.org/whl/torch-1.9.0%2Bcpu/torch_spline_conv-1.2.1-cp39-cp39-linux_x86_64.whl
+e3nn==0.3.5
+# Preserve compatibility with PyTorch 1.9's TensorBoard integration.
+setuptools==59.5.0
+tensorboard==2.10.1
+protobuf==3.19.6
+numpy<2
+scipy
+h5py
+pathos
+pymatgen==2024.6.10
+tqdm
+matplotlib

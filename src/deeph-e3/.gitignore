@@ -1,0 +1,9 @@
+.venv/
+.python-runtime/
+.julia-runtime/
+.julia-depot/
+.bootstrap/
+.cache/
+.tmp/
+__pycache__/
+setup.log
