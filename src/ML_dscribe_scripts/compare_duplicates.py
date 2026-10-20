@@ -9,7 +9,9 @@ before are now told apart, and which still coincide.
 Each argument is a descriptor tag (its find_duplicates output is looked up with
 the vector options below) or a folder that holds distinct_gbs.csv.
 
-Outputs, in calculations/ML_dscribe/CoGe/comparisons/<A>__<B>/<vector tag>/:
+Outputs, in calculations/ML_dscribe/CoGe/standard/comparisons/<A>__<B>/<vector tag>/, or in
+calculations/ML_dscribe/CoGe/comparison/comparisons/... when the two folders come from different
+descriptor trees (e.g. standard against covariant SOAP):
   comparison_groups.csv   every coinciding group of either run and what became of it
   comparison_summary.json counts
 """
@@ -128,7 +130,8 @@ def main():
             for name, table in zip(("first", "second"), tables)},
         "run": mc.run_metadata(),
     }
-    out = args.out_dir or (mc.OUTPUT_ROOT / "comparisons" / f"{name_a}__{name_b}"
+    same_tree = all(mc.OUTPUT_ROOT.resolve() in Path(folder).resolve().parents for folder in (folder_a, folder_b))
+    out = args.out_dir or ((mc.OUTPUT_ROOT if same_tree else mc.COMPARISON_ROOT) / "comparisons" / f"{name_a}__{name_b}"
                            / mc.vector_tag(args.kind, args.radius, args.planes, args.thickness))
     columns = ["found_in", "status", "size", "families", "n_pieces_in_second", "pieces_in_second",
                "n_added_in_second", "structure_verdict_in_second"]

@@ -22,7 +22,8 @@ import make_vasp_inputs as mvi  # noqa: E402
 GOLDEN = Path(__file__).resolve().parent / "tests/golden"
 GOLDEN_CASES = [("CoGe_100_GB", "convergence-nonsoc", sym, "8x", point)
                 for sym in ("sym00177", "sym00174")
-                for point in ("e500_k1x9x9", "e350_k1x9x9", "e500_k1x3x3")]
+                for point in ("e500_k1x9x9", "e350_k1x9x9", "e500_k1x3x3")] + \
+               [("CoGe_100_GB", "moment-check", sym, "8x", "e500_k1x9x9") for sym in ("sym00177", "sym00190")]
 GOLDEN_HASH = "GOLDEN"
 BULK_LIVE = ("sym00000", "sym00311", "sym00622")
 
@@ -90,12 +91,25 @@ class BulkAnchor(unittest.TestCase):
         self.assertEqual(changed, {
             "SYSTEM": ("CoGe B20 SCF", "CoGe B20 [100] GB convergence"),
             "ENCUT": ("600", "500"), "EDIFF": ("1E-8", "1E-6"), "ISMEAR": ("-1", "1"),
-            "LCHARG": (".TRUE.", ".FALSE."), "ICHARG": ("1", "2"), "KPAR": ("3", "4"), "NCORE": ("1", "4")})
+            "LCHARG": (".TRUE.", ".FALSE."), "ICHARG": ("1", "2"), "KPAR": ("3", "4"), "NCORE": ("1", "4"),
+            "ISPIN": ("2", "1")})
         added = {k: gb[k] for k in gb.keys() - anchor.keys()}
-        self.assertEqual(added, {"NBANDS": "512", "AMIX": "0.2", "AMIX_MAG": "0.8", "AMIN": "0.01"})
-        self.assertEqual(anchor.keys() - gb.keys(), {"LORBIT"})
-        self.assertEqual(gb["MAGMOM"], "64*1.0 64*0.0")
+        self.assertEqual(added, {"NBANDS": "512", "AMIX": "0.2", "AMIN": "0.01"})
+        self.assertEqual(anchor.keys() - gb.keys(), {"LORBIT", "MAGMOM"})
         self.assertEqual(gb["SIGMA"], "0.05")
+
+    def test_moment_check_differs_from_sweep_only_by_declared_overrides(self):
+        sweep = mvi.tags(mvi.render_incar("CoGe_100_GB", "convergence-nonsoc", "e500_k1x9x9", (64, 64), "X"))
+        check = mvi.tags(mvi.render_incar("CoGe_100_GB", "moment-check", "e500_k1x9x9", (64, 64), "X"))
+        changed = {k: (sweep[k], check[k]) for k in sweep.keys() & check.keys() if sweep[k] != check[k]}
+        self.assertEqual(changed, {"ISPIN": ("1", "2")})
+        added = {k: check[k] for k in check.keys() - sweep.keys()}
+        self.assertEqual(added, {"MAGMOM": "64*1.0 64*0.0", "LORBIT": "11", "AMIX_MAG": "0.8",
+                                 "BMIX_MAG": "0.0001"})
+        self.assertEqual(sweep.keys() - check.keys(), set())
+        self.assertEqual(mvi.render_kpoints("CoGe_100_GB", "moment-check", "e500_k1x9x9"),
+                         mvi.render_kpoints("CoGe_100_GB", "convergence-nonsoc", "e500_k1x9x9"))
+        self.assertEqual(list(mvi.recipe("CoGe_100_GB", "moment-check")["points"]), ["e500_k1x9x9"])
 
     def test_stamp_mask_ignores_only_the_hash(self):
         a = mvi.render_incar("CoGe_100_GB", "convergence-nonsoc", "e500_k1x9x9", (64, 64), "abc1234")
@@ -124,9 +138,8 @@ class TempTree(unittest.TestCase):
             path.parent.mkdir(parents=True, exist_ok=True)
             path.write_text(synthetic_poscar())
 
-    def run_gen(self, dry_run=False, git_hash="abc1234", points=None):
-        return mvi.generate("CoGe_100_GB", "convergence-nonsoc", ["sym00001"], "8x", points, dry_run,
-                            git_hash, self.root)
+    def run_gen(self, dry_run=False, git_hash="abc1234", points=None, stage="convergence-nonsoc"):
+        return mvi.generate("CoGe_100_GB", stage, ["sym00001"], "8x", points, dry_run, git_hash, self.root)
 
     def folder(self, point="e500_k1x9x9"):
         return self.root / f"calculations/CoGe_interface/100/sym00001/8x/convergence/{point}"
@@ -141,6 +154,15 @@ class TempTree(unittest.TestCase):
             f"# make_vasp_inputs.py v{mvi.VERSION} (git abc1234) family=CoGe_100_GB stage=convergence-nonsoc\n"))
         counts, problems, _, _ = self.run_gen(git_hash="fff9999")  # only the stamp hash differs
         self.assertEqual((counts["identical"], counts["written"], problems), (9, 0, []))
+
+    def test_moment_check_has_its_own_folder(self):
+        self.run_gen()
+        counts, problems, ready, _ = self.run_gen(stage="moment-check")
+        check = self.root / "calculations/CoGe_interface/100/sym00001/8x/moment-check/e500_k1x9x9"
+        self.assertEqual((counts["written"], problems, ready), (1, [], [check]))
+        self.assertNotEqual((check / "INCAR").read_text(), (self.folder() / "INCAR").read_text())
+        counts, _, _, _ = self.run_gen()  # the sweep's own folders are untouched
+        self.assertEqual(counts["identical"], 9)
 
     def test_dry_run_writes_nothing(self):
         counts, problems, _, _ = self.run_gen(dry_run=True)

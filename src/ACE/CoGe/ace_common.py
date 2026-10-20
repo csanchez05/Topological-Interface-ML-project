@@ -96,16 +96,26 @@ def add_ace_arguments(parser):
     group.add_argument("--n-max", type=int, default=8, help="radial functions for nu1 and nu2 (default 8)")
     group.add_argument("--l-max", type=int, default=6, help="largest angular order for nu2 (default 6)")
     group.add_argument("--sigma", type=float, default=0.5,
-                       help="Gaussian width of each atom in A (default 0.5, as SOAP; unused with --density dirac)")
+                       help="Gaussian width of each atom in A (default 0.5, as SOAP)")
     group.add_argument("--smoothing", type=float, default=0.5,
                        help="width of the shifted-cosine cutoff smoothing in A (default 0.5)")
     group.add_argument("--density", default="gaussian", choices=("gaussian", "dirac"),
-                       help="atom density: gaussian (smeared, as SOAP; default) or dirac (textbook ACE)")
+                       help="atom density: gaussian (smeared, as SOAP; default); dirac (textbook ACE) is refused, featomic 0.6.7 cannot expand it on the GTO basis")
     group.add_argument("--nu-max", type=int, default=3, choices=(2, 3),
                        help="highest body order minus one: 2 stops at the SOAP power spectrum, "
                             "3 adds the 4-body invariants (default 3)")
     group.add_argument("--n3", type=int, default=4, help="radial functions of the smaller nu3 expansion (default 4)")
     group.add_argument("--l3", type=int, default=4, help="largest angular order of the nu3 expansion (default 4)")
+    group.add_argument("--weighting", default="none", choices=("none", "pow"),
+                       help="radial weighting of the neighbour density: none (default) or pow, "
+                            "w(r) = 1 / (1 + (r / r0)^m) (Willatt et al. 2018; DScribe's pow with c = d = 1)")
+    group.add_argument("--weighting-r0", type=float, default=3.0, help="r0 of the pow weighting in A (default 3)")
+    group.add_argument("--weighting-m", type=int, default=4, help="exponent m of the pow weighting (default 4)")
+
+
+def pow_weighting(r0=3.0, m=4):
+    """The pow weighting as a soap_common weighting dict (DScribe's pow with c = d = 1, as the SOAP study)."""
+    return {"function": "pow", "r0": float(r0), "c": 1.0, "d": 1.0, "m": int(m)}
 
 
 def ace_settings(args):
@@ -117,6 +127,11 @@ def ace_settings(args):
         "l3": args.l3 if args.nu_max >= 3 else None,
         "radial_basis": "gto", "species": list(sc.SPECIES), "periodic": True,
     }
+    weighting = getattr(args, "weighting", "none")
+    if weighting == "pow":
+        settings["weighting"] = pow_weighting(args.weighting_r0, args.weighting_m)
+    elif weighting != "none":
+        raise ValueError(f"unknown weighting {weighting!r}")
     return settings
 
 
@@ -131,6 +146,8 @@ def ace_tag(settings):
     The first part is the SOAP tag of the same density (so the nu2 block of rc6.0_n8_l6_s0.5_nu3-n4-l4
     is the SOAP power spectrum of rc6.0_n8_l6_s0.5); a Dirac density replaces _s<sigma> by _dirac, a
     smoothing other than 0.5 A adds _sm<width>, and the suffix gives the body order and nu3 basis.
+    A weighting adds the SOAP suffix, e.g. _wpow-r3-c1-d1-m4. Settings without a "weighting" key (the
+    runs made before the option existed) are unweighted.
     """
     if settings["density"] == "gaussian":
         tag = sc.soap_tag({**settings, "rbf": "gto", "weighting": None})
@@ -138,6 +155,10 @@ def ace_tag(settings):
         tag = f"rc{settings['r_cut']:.1f}_n{settings['n_max']}_l{settings['l_max']}_dirac"
     else:
         raise ValueError(f"unknown density {settings['density']!r}")
+    weighting = settings.get("weighting")
+    if weighting:
+        plain = sc.soap_tag({**settings, "sigma": 1.0, "rbf": "gto", "weighting": None})
+        tag += sc.soap_tag({**settings, "sigma": 1.0, "rbf": "gto", "weighting": weighting})[len(plain):]
     if settings["smoothing"] != 0.5:
         tag += f"_sm{settings['smoothing']:g}"
     if settings["nu_max"] >= 3:
@@ -151,11 +172,30 @@ def hypers(settings, n_max, l_max):
     """featomic SphericalExpansion hypers for one expansion of this setting."""
     density = ({"type": "Gaussian", "width": settings["sigma"]} if settings["density"] == "gaussian"
                else {"type": "DiracDelta"})
+    weighting = settings.get("weighting")
+    if weighting:
+        if weighting["function"] != "pow" or weighting["c"] != weighting["d"]:
+            raise ValueError("featomic has only the pow weighting with c = d (Willatt2018)")
+        density["scaling"] = {"type": "Willatt2018", "exponent": int(weighting["m"]), "rate": float(weighting["c"]),
+                              "scale": float(weighting["r0"])}
     return {"cutoff": {"radius": settings["r_cut"],
                        "smoothing": {"type": "ShiftedCosine", "width": settings["smoothing"]}},
             "density": density,
             "basis": {"type": "TensorProduct", "max_angular": l_max,
                       "radial": {"type": "Gto", "max_radial": n_max - 1}}}
+
+
+def calculator_hypers(settings, n_max, l_max):
+    """What featomic.SphericalExpansion gets: hypers(), for a Gaussian density.
+
+    A Dirac density is refused: featomic 0.6.7 has no built-in radial integral for it on the GTO
+    basis ("this combination of basis and density is not supported"), and its SoapSpliner gives NaN
+    derivatives for that combination (tried 2026-10-13).
+    """
+    if settings["density"] == "dirac":
+        raise ValueError("--density dirac is not available: featomic 0.6.7 cannot expand a Dirac density "
+                         "on the GTO basis (neither built in nor splined); use --density gaussian")
+    return hypers(settings, n_max, l_max)
 
 
 def featomic_hypers(settings):
@@ -185,11 +225,13 @@ class Calculator:
         self.chunk = int(chunk)
         self.neighbors = Labels(["neighbor_type"],
                                 np.array([[ATOMIC_NUMBERS[s]] for s in sc.SPECIES], dtype=np.int32))
-        self.expansion = featomic.SphericalExpansion(**hypers(settings, settings["n_max"], settings["l_max"]))
+        self.expansion = featomic.SphericalExpansion(
+            **calculator_hypers(settings, settings["n_max"], settings["l_max"]))
         self.nu2 = DensityCorrelations(n_correlations=1, max_angular=settings["l_max"])
         self.even = Labels(["o3_lambda", "o3_sigma"], np.array([[0, 1]], dtype=np.int32))
         if settings["nu_max"] >= 3:
-            self.expansion3 = featomic.SphericalExpansion(**hypers(settings, settings["n3"], settings["l3"]))
+            self.expansion3 = featomic.SphericalExpansion(
+                **calculator_hypers(settings, settings["n3"], settings["l3"]))
             self.nu3 = DensityCorrelations(n_correlations=2, max_angular=settings["l3"])
             self.both = Labels(["o3_lambda", "o3_sigma"], np.array([[0, 1], [0, -1]], dtype=np.int32))
         self.properties = {}
@@ -351,11 +393,18 @@ def pristine_norms(tag_or_dir, blocks=None):
     return {name: float(np.linalg.norm(X[rows[0]])) for name, X in arrays.items()}
 
 
+# A pristine block shorter than this is zero by symmetry, not small: at l3 <= 2 every B20 atom (on a 3-fold
+# axis) sees an axially symmetric density, so nu3_odd vanishes in bulk (3e-19 at l3 = 2; the pristine blocks of
+# the grid runs are otherwise 0.2-60 long). Dividing by it would blow the block up by ~1e19.
+VANISHING_NORM = 1e-6
+
+
 def assemble(arrays, scaling="pristine", norms=None):
     """Join the blocks of {block: X} into one (N, sum 2P) array, in storage order.
 
     scaling "pristine" divides each block by the length of its pristine-bulk vector (norms), so the
-    pristine cell has length 1 in every block; "none" joins the raw blocks.
+    pristine cell has length 1 in every block; "none" joins the raw blocks. A block that vanishes in
+    pristine bulk (length below VANISHING_NORM) cannot be scaled that way and is refused.
     """
     if scaling not in SCALINGS:
         raise ValueError(f"scaling must be one of {SCALINGS}")
@@ -365,6 +414,9 @@ def assemble(arrays, scaling="pristine", norms=None):
         if scaling == "pristine":
             if not norms or name not in norms or not norms[name] > 0:
                 raise ValueError(f"no pristine norm for block {name}")
+            if norms[name] < VANISHING_NORM:
+                raise ValueError(f"block {name} vanishes in pristine bulk (length {norms[name]:.1e}), so it cannot be "
+                                 "divided by it; leave it out (--ace-blocks) or use --ace-scaling none")
             X = X / norms[name]
         parts.append(X)
     return np.concatenate(parts, axis=1)

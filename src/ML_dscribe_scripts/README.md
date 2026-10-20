@@ -1,6 +1,10 @@
 # Does the GB vector tell grain boundaries apart? (Stage 1, steps 1.4 and 1.5)
 
-Analysis scripts that work on the SOAP vectors written by `src/dscribe/CoGe/`.
+Analysis scripts that work on the SOAP vectors written by `src/dscribe/CoGe/`: standard SOAP (the
+default) or, with `--descriptor-type covariant`, covariant SOAP (since 2026-10-13 the primary
+descriptor; see "Covariant SOAP" below). With `--descriptor-type ace` they read the ACE vectors of
+`src/ACE/CoGe/` (see "ACE vectors" below). The code is shared; the outputs are split by descriptor
+(see "Outputs").
 Environment: `source src/mlenv/env.sh`. Everything runs on one core in a few minutes, on a compute
 node: loading the vectors takes about 1.9 GB, more than the login node has free (see `CLAUDE.md`).
 
@@ -12,7 +16,7 @@ node: loading the vectors takes about 1.9 GB, more than the login node has free 
 
 | File | What it does |
 |---|---|
-| `ml_common.py` | Shared code: loads one vector per GB through `soap_common.load_gb`, distances, grouping, writers |
+| `ml_common.py` | Shared code: loads one vector per GB through `soap_common.load_gb` (or `covariant_common.load_gb_vectors` / `ace_common.load_gb_vectors` for `--descriptor-type covariant` / `ace`), distances, grouping, writers, the output roots per descriptor (`OUTPUT_ROOTS`, `plot_root`, `COMPARISON_ROOT`) |
 | `gb_labels.py` | Reads the three `Information.txt` files and derives the labels |
 | `krr_classify.py` | Step 1.4 |
 | `find_duplicates.py` | Step 1.5 |
@@ -23,14 +27,16 @@ node: loading the vectors takes about 1.9 GB, more than the login node has free 
 | `rcut_scan_summary.py` | Table and figures for either scan (the 8x-only `rcut_scan.slurm` is in `archive/src/ML_dscribe_scripts/`) |
 | `test_ml_scripts.py` | Unit tests on synthetic data |
 | `select_gbs.py`, `test_select_gbs.py` | Stage 2 GB selection in PCA, t-SNE and UMAP; sampling tests |
-| `descriptor_grid.py`, `descriptor_grid.slurm` | Descriptor study: all SOAP runs, the covariant run and both analyses as one whole-node job |
-| `descriptor_sensitivity.py` | Descriptor study part C: which SOAP settings change which GBs look alike; seed and thickness tests |
+| `descriptor_grid.py`, `descriptor_grid.slurm` | Descriptor study: all SOAP runs, the covariant run and both analyses as one whole-node job; `--study representation` (fifth/sixth studies) and `--study covariant` (every standard-SOAP analysis repeated on covariant SOAP) |
+| `descriptor_sensitivity.py` | Descriptor study part C: which SOAP (or covariant SOAP, ACE) settings change which GBs look alike; seed and thickness tests |
 | `selection_benchmark.py` | Descriptor study part D: which way of choosing GBs teaches a model most from the fewest |
 | `test_descriptor_study.py` | Unit tests of the three study scripts and the full-space selection helpers |
-| `plot_descriptor_study.py`, `test_plot_descriptor_study.py` | Figures that explain the descriptor study, in `plots/CoGe/dim-reduction/SOAP/<topic>/`; tests on synthetic study outputs |
+| `plot_descriptor_study.py`, `test_plot_descriptor_study.py` | Figures that explain the studies, in `plots/CoGe/dim-reduction/SOAP/{standard,covariant,comparison}/<topic>/` and `plots/CoGe/dim-reduction/ACE/<topic>/`; tests on synthetic study outputs |
 | `geometry_labels.py`, `test_free_labels.py` | Free labels that depend on the shift (shortest distance, overlaps, coordination change) per interface, read from the POSCARs; tests on hand-built cells |
 | `representation_study.py`, `test_representation_study.py` | Fifth study (standard/covariant × interface/whole cell, every map method) and sixth study (12 SOAP settings × 4 representations) |
 | `representation_study.slurm` | Fifth and sixth studies as two whole-node jobs (`--part A`, `--part B`) through `descriptor_grid.py --study representation` |
+| `gb_symmetry.py`, `test_gb_symmetry.py` | Residual-symmetry labels of every 8x GB cell (spglib; run with `src/dft_plots/.venv`): inversion, parallel mirror, 2-fold axes, space group, `lattice`, `motif` |
+| `covariant_vs_labels.py`, `test_covariant_vs_labels.py`, `covariant_vs_labels.slurm` | Covariant SOAP vs symmetry labels as KRR inputs for one property, same model, rows and folds |
 
 ## Stage 2: selecting GBs for calculation
 
@@ -52,7 +58,7 @@ the central selection takes the actual member nearest each of 30 K-means
 centroids. The output folder named `median` holds this centroid selection.
 Selections can overlap between lists. Stochastic methods use seed 42 and one thread.
 
-**Missing since about 2026-10-07:** the kept `FPS/` and `median/` folders are not on disk (cause unknown; found 2026-10-13). An exact copy, whose 18 files match the SHA-256 values in `calculations/ML_dscribe/CoGe/dim-reduction/run.json`, is in `archive/reorganization_20261003/before_edit/plots/CoGe/dim-reduction/{FPS,median}/`; they were left unrestored on purpose, so `select_gbs.py --verify-only` of the default run stops at the first missing file.
+**Missing since about 2026-10-07:** the kept `FPS/` and `median/` folders are not on disk (cause unknown; found 2026-10-13). An exact copy, whose 18 files match the SHA-256 values in `calculations/ML_dscribe/CoGe/standard/dim-reduction/run.json`, is in `archive/reorganization_20261003/before_edit/plots/CoGe/dim-reduction/{FPS,median}/`; they were left unrestored on purpose, so `select_gbs.py --verify-only` of the default run stops at the first missing file.
 
 `plots/CoGe/dim-reduction/SOAP/{FPS,median}/` contains `pca.txt`, `tsne.txt` and
 `umap.txt`, each with exactly 30 project-relative POSCAR paths, and
@@ -67,7 +73,7 @@ no labels on individual structures. PCA axes include their explained variance;
 t-SNE and UMAP axes identify the two embedding coordinates.
 
 Coordinates, structure mappings, selected row indices, settings, input/output
-hashes, and validation results are in `calculations/ML_dscribe/CoGe/dim-reduction/`.
+hashes, and validation results are in `calculations/ML_dscribe/CoGe/standard/dim-reduction/`.
 Verification replays sampling from the saved coordinates without refitting
 the embeddings. No new SOAP descriptors or DFT calculations are run.
 
@@ -96,8 +102,8 @@ Used on 2026-10-07 to refill the [100] list under the 1.8 Å overlap limit (`CLA
   rather than all 1,112 GBs. The rules are otherwise unchanged: seed 42, FPS from bulk, the member nearest
   each k-means centroid, `--n-select` per list (default 30).
 - **Folders.** Without `--plot-dir`/`--out-dir` the outputs go to a tagged subfolder, for example
-  `plots/CoGe/dim-reduction/SOAP/plane100_dmin1.8/{FPS,median}/` and
-  `calculations/ML_dscribe/CoGe/dim-reduction/plane100_dmin1.8/`.
+  `plots/CoGe/dim-reduction/SOAP/standard/plane100_dmin1.8/{FPS,median}/` and
+  `calculations/ML_dscribe/CoGe/standard/dim-reduction/plane100_dmin1.8/`.
 - **What changes in the outputs.** The figures carry a title naming the subset, and their legends list
   only the grain classes present. `run.json` records the filter under `subset`.
 - **Every run** also writes `sample_list.csv`, the union of the six lists in the layout of
@@ -121,11 +127,15 @@ Which vector is used (the same options on `krr_classify.py` and `find_duplicates
 
 | Option | Default | Note |
 |---|---|---|
-| `--descriptor` | `rc6.0_n8_l6_s0.5` | a tag under `calculations/descriptors/dscribe/standard/`, or a folder |
-| `--kind` | `interface` | or `nonbulk`, `global` |
+| `--descriptor-type` | `soap` | standard SOAP; or `covariant` (see "Covariant SOAP"), `ace` (see "ACE vectors") |
+| `--descriptor` | `rc6.0_n8_l6_s0.5` (ace: `rc6.0_n8_l6_s0.5_nu3-n4-l4`) | a tag under the type's `calculations/descriptors/<dscribe or ACE>/standard/`, or a folder |
+| `--kind` | `interface` | or `nonbulk` (SOAP only), `global` |
 | `--radius` | `8` | one of the stored radii; only for `interface` |
 | `--planes` | `both` | or `edge`, `mid` (one of the two interfaces in the cell) |
 | `--thickness` | `4` | one thickness for every GB, or `all` to pool them (`krr_classify.py`, `pooled_duplicates.py`) |
+| `--ace-blocks` | all stored | ACE only: any of `nu1 nu2 nu3_even nu3_odd` |
+| `--ace-scaling` | `pristine` | ACE only: each block divided by its pristine-bulk length before joining; `none` joins the raw blocks |
+| `--covariant-blocks` | `polar axial tensor pseudotensor` | covariant only: blocks joined (λ = 1, 2; add `invariant` for λ = 0); unscaled |
 
 After raising n_max and l_max (step 1.5 of the guide):
 
@@ -140,19 +150,147 @@ Loading the vectors goes through `soap_common.load_gb`, which reads only the arr
 radius (about 0.2 GB stored, about 1 GB in memory while combining the planes, at the default settings).
 Still a compute-node job.
 
+## ACE vectors (`--descriptor-type ace`, since 2026-10-13)
+
+`krr_classify.py`, `find_duplicates.py`, `pooled_duplicates.py` (through `ml_common.add_vector_arguments`)
+and `select_gbs.py` take `--descriptor-type ace`. The vector is then the ACE blocks of
+`calculations/descriptors/ACE/standard/<tag>/` joined (`ace_common.load_gb_vectors`): by default all four
+(`nu1`, `nu2` = the SOAP power spectrum, `nu3_even`, `nu3_odd`), each divided by its pristine-bulk length.
+Results go to `calculations/ML_ACE/CoGe/<descriptor tag>/<vector tag>/` instead of `calculations/ML_dscribe/CoGe/`;
+a non-default block choice or scaling adds a suffix to the vector tag (`interface_r8_both_t4_nu2+nu3_odd_noscale`).
+`select_gbs.py --descriptor-type ace` writes to `plots/CoGe/dim-reduction/ACE/` and
+`calculations/ML_ACE/CoGe/dim-reduction/` (a non-default ACE run, block choice or scaling gets a tag folder),
+titles its figures "ACE <tag>", and hashes `ace_common.py` with its inputs.
+Shared with SOAP, because they do not depend on the descriptor: the labels in
+`calculations/ML_dscribe/CoGe/labels/` and the structure census of the 1,112 distinct GBs
+(`rc6.0_n8_l6_s0.5/interface_r8_both_t4/distinct_gbs.csv`, checked atom by atom).
+ACE has no `nonbulk` vector. A folder of the other type is refused with a hint.
+`descriptor_grid.py`, `representation_study.py` and `rcut_scan_all.py` take no `ace`.
+
+```bash
+python -B src/ML_dscribe_scripts/find_duplicates.py --descriptor-type ace --structure-census --single-interfaces
+python -B src/ML_dscribe_scripts/krr_classify.py --descriptor-type ace
+python -B src/ML_dscribe_scripts/select_gbs.py --descriptor-type ace
+```
+
+**The descriptor-study screens for ACE (since 2026-10-13).** `descriptor_sensitivity.py`,
+`selection_benchmark.py` and `plot_descriptor_study.py` take `--descriptor-type ace`; outputs in
+`calculations/ML_ACE/CoGe/{descriptor_sensitivity,selection_benchmark}/`, figures in
+`plots/CoGe/dim-reduction/ACE/{descriptor_settings,maps_by_setting,seed_stability,thickness,selection,free_labels}/`
+(free_labels: `krr_r2.png` only, from the ACE KRR run with census folds).
+- The descriptor runs are made by `src/ACE/CoGe/ace_grid.py` (`run_ace_grid.slurm`): the 27 one-knob runs
+  of `ace_grid.ace_runs()` at 8x (`<tag>_t8`), and the 8x copy of the reference with radii 6, 8, 10.
+- Settings: r_cut, n_max, l_max, sigma as for SOAP, plus the nu3 expansion `n3` (2, 3, 5, 6) and `l3`
+  (2, 3, 5, 6); weighting is pow only (r_cut 6, 8, 12; at 8 and 12 against the unweighted run at that
+  r_cut). At the reference run: blocks (nu2 only = the SOAP power spectrum, nu1 + nu2, nu3 only, all but
+  nu3_odd), regions (radius 6 and 10, edge or mid only, global) and processing (blocks unscaled,
+  standardised, unit length). No nonbulk or one-mean vector.
+- At l3 2 the `nu3_odd` block vanishes in pristine bulk (B20 atoms sit on 3-fold axes), so it cannot
+  be divided by its pristine length; that run is loaded without `nu3_odd` and compared with the
+  reference without it (`blocks without nu3_odd`).
+- ACE vectors are about 26k wide, so the distances, PCA, GFRE and t-SNE/UMAP inputs use `narrow()`
+  (exact), as for covariant SOAP.
+- The benchmark's existing lists are the ACE FPS/median lists in `plots/CoGe/dim-reduction/ACE/`. Both
+  PCA lists pick `111/sym00119` (plain bulk), which the pool drops (NO_BOUNDARY); the benchmark scores
+  those lists on their other 29 GBs and names the left-out structure in `existing_lists.csv`
+  (`left_out_outside_pool`), `summary.json` and the `existing_lists.png` note.
+
+```bash
+python -B src/ML_dscribe_scripts/descriptor_sensitivity.py --descriptor-type ace
+python -B src/ML_dscribe_scripts/selection_benchmark.py --descriptor-type ace \
+    --krr-settings calculations/ML_ACE/CoGe/rc6.0_n8_l6_s0.5_nu3-n4-l4/interface_r8_both_t4_no_boundary
+python -B src/ML_dscribe_scripts/plot_descriptor_study.py --descriptor-type ace
+```
+
+The default tolerance (1e-4) was set from the SOAP thickness noise; `find_duplicates.py` reports the
+ACE thickness noise and the counts at other tolerances in `duplicates_summary.json`, so check it there.
+The odd block alone (`--ace-blocks nu3_odd`) does not suit the duplicate search: it vanishes by symmetry
+for GBs whose grains are mirror images, and the relative distance of two near-zero vectors is noise
+(smoke test: thickness noise up to 2.0, against 3e-5 with all blocks). Join it to an even block.
+
+## Covariant SOAP (`--descriptor-type covariant`, `--study covariant`, since 2026-10-13)
+
+Covariant SOAP is the primary descriptor from 2026-10-13 (user). It keeps the λ = 1 and 2 parts of
+the SOAP expansion, which turn with the crystal (polar and axial vectors, tensors), so unlike
+standard SOAP it can tell a turned or mirrored grain from the original. The GB vector is
+[C_edge | C_mid]: the polar, axial, tensor and pseudotensor blocks of the atoms within 8 Å of each
+interface, the two interfaces joined, never averaged (averaging cancels them,
+`plots/.../SOAP/covariant/vector_sizes/`). Unscaled; 118,784 numbers at the reference setting.
+Loader: `covariant_common.load_gb_vectors` (`src/dscribe/CoGe/covariant/`); runs from
+`covariant_descriptor.py` in `calculations/descriptors/dscribe/covariant/{both_interfaces,global}/<run>/`.
+
+Every script that takes `--descriptor-type` accepts `covariant` (`krr_classify.py`, `find_duplicates.py`,
+`pooled_duplicates.py`, `select_gbs.py`, `descriptor_sensitivity.py`, `selection_benchmark.py`,
+`plot_descriptor_study.py`); `--covariant-blocks` picks other blocks. Outputs go to
+`calculations/ML_dscribe/CoGe/covariant/` and `plots/CoGe/dim-reduction/SOAP/covariant/` in the same
+layout as standard SOAP, so every standard result has a covariant twin.
+
+**Folds.** Turned copies of one GB have different covariant vectors, so `distinct` folds can put a
+copy in training and its twin in the test set. Every covariant KRR therefore runs with
+`--census-grouping` (see Step 1.4), and the figures quote the census score.
+
+**The study** (`descriptor_grid.py --study covariant`, one job): every standard-SOAP analysis again
+on covariant SOAP.
+
+| Task | What | Output (under `covariant/`) |
+|---|---|---|
+| `covariant reference` | the reference run (all 13,868 structures, every block, made 2026-10-06); only checked | descriptors |
+| `covariant <knob> <value>` | the settings of `descriptor_sensitivity.covariant_runs()` (the standard grid without weighting, which the covariant code lacks): r_cut 4–12, n_max 4–12, l_max 4–10, σ 0.3–1.0; 8x only, λ ≥ 1, named `<tag>_t8`; `check_covariant.py` must pass. l_max 2 is left out (`COVARIANT_LEFT_OUT`): it fails the bulk check (pristine axial and pseudotensor cell averages 0.26 and 0.98 of one atom's vector, job 13016); cause not investigated. Runs already stored (l_max 4 and 8, from the sixth study) are only checked | descriptors |
+| `duplicates` | Stage 1.5: `find_duplicates.py --structure-census --single-interfaces` | `rc6.0_n8_l6_s0.5/interface_r8_both_t4/` |
+| `krr` | Stage 1.4: `krr_classify.py --regression --census-grouping` (D0985 dropped, plus the geometry labels) | `rc6.0_n8_l6_s0.5/interface_r8_both_t4_no_boundary/` |
+| `select`, `select plane100` | Stage 2 lists: `select_gbs.py`, and among the clean [100] GBs (`--planes 100 --min-pair 1.8`) | `dim-reduction/`; lists in the plots folder |
+| `scan rc<r>`, `scan summary` | r_cut scan at 8x (r_cut 4, 5, 6, 8, 10, 12; interface radius 8 Å; D0985 kept, as in the standard scan) | `rcut_scan_8x/` |
+| `sensitivity` | descriptor study part C (`descriptor_sensitivity.py`; "blocks" replaces "weighting" as a knob) | `descriptor_sensitivity/` |
+| `benchmark` | descriptor study part D (`selection_benchmark.py`, KRR settings from the `krr` task) | `selection_benchmark/` |
+| `plots` | `plot_descriptor_study.py --descriptor-type covariant` into `SOAP/covariant/`, the grain-class overview into `SOAP/comparison/`, and the standard `stage1/` figures | figures |
+
+```bash
+source src/mlenv/env.sh
+python -B src/ML_dscribe_scripts/descriptor_grid.py --study covariant --dry-run --cpus 48 --mem-gb 340
+sbatch --nodelist=qcg0 --cpus-per-task=48 --mem=380G \
+  --output=calculations/descriptors/dscribe/logs/covariant_study-%j.out \
+  src/ML_dscribe_scripts/descriptor_grid.slurm --study covariant
+```
+
+Task logs and `status.json`: `calculations/descriptors/dscribe/logs/covariant_study/`. Finished tasks
+are skipped on resubmission. `--only "<knob> <value>" …` limits the runs, the scan points and the
+analyses. A smoke test needs `--limit N --no-analyses` and a scratch `--covariant-root`; the analyses
+can be smoke-tested one by one with smaller settings (`archive/covariant_primary_20261013/smoke/run_smoke.sh`).
+
+Cost, measured on qcg0 (times, CPUs and the driver's memory budget from the driver logs
+`covariant_study-<job>.out`):
+- job 13016 (2026-10-13, 24 CPUs, 270 GB): 11,312 s. Each 8x covariant settings run took
+  930–1,510 s on 12 CPUs;
+  `duplicates` 1,120 s, `krr` 633 s, `select` 856 s, each scan point 740–1,070 s. The l_max 2 run
+  failed its bulk check, so `sensitivity`, `benchmark` and `plots` did not start;
+- job 13048 (resubmission without l_max 2, 48 CPUs, 252 GB): 6,266 s. `sensitivity` 5,759 s and `benchmark`
+  6,052 s, side by side on 24 CPUs each; `plots` 215 s on 1 CPU.
+
 ## Outputs
 
-One folder per descriptor and per choice of vector, so reruns never overwrite each other:
+One tree per descriptor kind (since 2026-10-13), then one folder per descriptor and per choice of
+vector, so reruns never overwrite each other. The code is shared; `ml_common.OUTPUT_ROOTS[type]`
+names the tree and `ml_common.plot_root(type)` the figure folder.
 
 ```
 calculations/ML_dscribe/CoGe/
-  labels/                                   gb_labels.csv, gb_operations.csv, gb_labels.json
+  labels/                                   gb_labels.csv, gb_operations.csv, gb_labels.json, geometry_labels.csv,
+                                            gb_symmetry.csv: shared by every descriptor
+  standard/                                 standard SOAP (--descriptor-type soap, the default)
+  covariant/                                covariant SOAP (--descriptor-type covariant): the same files and folders
+  comparison/                               studies that compare descriptor kinds: representation_study/,
+                                            settings_grid/, covariant_vs_labels/
+calculations/ML_ACE/CoGe/                   ACE (--descriptor-type ace): <tag>/<vector tag>/, dim-reduction/,
+                                            descriptor_sensitivity/, selection_benchmark/
+plots/CoGe/dim-reduction/SOAP/{standard,covariant,comparison}/, plots/CoGe/dim-reduction/ACE/
+
+Inside standard/ (and likewise covariant/):
   <descriptor tag>/<vector tag>/            e.g. rc6.0_n8_l6_s0.5/interface_r8_both_t4/
     krr_summary.csv, krr_summary.json       accuracies; settings and chosen hyperparameters
     krr_predictions.csv                     out-of-fold prediction for every GB
     krr_confusions.csv                      true x predicted counts
     krr_confused_pairs.csv                  label pairs the model mixes up, most mixed first
-    krr_confusion_*.png                     plane and grain class, "distinct" grouping
+    krr_confusion_*.png                     plane and grain class, strictest grouping ("census" if run, else "distinct")
     distinct_gbs.csv                        every GB with its distinct-GB number (use this later to drop repeats)
     duplicate_groups.csv                    one row per coinciding group, with operations and structure verdict
     duplicate_members.csv                   one row per GB in a group
@@ -160,6 +298,7 @@ calculations/ML_dscribe/CoGe/
     near_misses.csv                         closest pairs that do not coincide, structure-tested
     duplicates_summary.json                 counts, tolerance, sensitivity, structure-test totals
   comparisons/<A>__<B>/<vector tag>/        comparison_groups.csv, comparison_summary.json
+                                            (under comparison/comparisons/ when A and B are different kinds)
 ```
 
 ## Labels
@@ -255,7 +394,15 @@ srun -p general --exclude=qcg-docker --nodes=1 --ntasks=1 -c 1 --mem=2G -t 00:15
   - `family`: the guide's rule. With one thickness per GB this is plain cross-validation.
   - `distinct`: GBs whose vectors coincide (step 1.5) are also kept in one fold. Otherwise a test GB
     can have an identical copy in the training set, and the score measures look-up, not prediction.
-    **Quote this one.**
+    **Quote this one** (standard SOAP).
+  - `census` (`--census-grouping`, since 2026-10-13): `distinct` joined with the structure classes of
+    the Stage 1.5 census (`ml_common.CENSUS`, column `structure_class`), so every copy of one structure
+    shares a fold even when the vectors differ. Needed for covariant SOAP: its vectors turn with the
+    cell, so a turned copy of a GB is a different vector (at the reference setting none of the 282
+    census groups keeps one vector: 1,541 distinct vectors at any tolerance up to 1e-3), and under
+    `distinct` it could sit in the training set while its twin is tested. For standard SOAP,
+    census and distinct are the same partition. When it is run it is the headline grouping
+    (`headline_grouping` in `krr_summary.json`; the confusion plots and the figures use it).
 - `krr_summary.csv` columns: `baseline_majority` (always predict the commonest class of the training
   set), `krr_accuracy`, `krr_fold_std`, `knn_accuracy`, `ceiling_from_coinciding_vectors` (coinciding
   vectors with different labels cap what any model can reach), accuracy split by whether a GB has a
@@ -378,7 +525,7 @@ analysis uses 1 CPU (`--thickness-cpus`); a pooled analysis uses 6 (`--pooled-cp
 
 ```
 calculations/descriptors/dscribe/standard/{global,both_interfaces}/rc<r_cut>_n8_l6_s0.5/   descriptors
-calculations/ML_dscribe/CoGe/rcut_scan_all/
+calculations/ML_dscribe/CoGe/standard/rcut_scan_all/
   by_thickness/rc<r_cut>/interface_r<R>_both_t<T>/              one thickness
   pooled/rc<r_cut>/interface_r<R>_both_tall/                    all thicknesses: krr_*, pooled_*
   rcut_scan_summary.csv, rcut_scan_by_thickness.png, rcut_scan_pooled.png
@@ -397,8 +544,8 @@ whole cell. Those analyses are run like the others; the grid figure marks them w
 ### 8x-only scan (`archive/src/ML_dscribe_scripts/rcut_scan.slurm`)
 
 The first scan used one thickness (8x, 1,541 structures per cutoff). Its results are in
-`calculations/ML_dscribe/CoGe/rcut_scan_8x/`
-(`python -B src/ML_dscribe_scripts/rcut_scan_summary.py --scan-dir calculations/ML_dscribe/CoGe/rcut_scan_8x`).
+`calculations/ML_dscribe/CoGe/standard/rcut_scan_8x/`
+(`python -B src/ML_dscribe_scripts/rcut_scan_summary.py --scan-dir calculations/ML_dscribe/CoGe/standard/rcut_scan_8x`).
 
 | r_cut | Plane | Grain class | Distinct vectors (r_cut + 2 / fixed 8) | Closest different GBs | Farthest copies |
 |---|---|---|---|---|---|
@@ -434,11 +581,14 @@ GBs may be labelled and see which way of choosing them learns fastest (part D).
   (label-free Bayesian active learning), and `select_gbs.py`'s six map rules. KRR with fixed Stage 1
   settings and 1-NN learn grain class, plane and handedness (a control). Label-free coverage scores
   for every pick set and for the six existing lists. FPS and random curves for every grid setting.
-- The covariant SOAP run (reference setting) is part of the same job; it is not used in C or D.
+- The covariant SOAP run (reference setting) is part of the same job; it is not used in C or D here.
+  Since 2026-10-13, `--study covariant` repeats C and D (and Stage 1.4/1.5, the selection and an 8x
+  r_cut scan) on covariant SOAP; see "Covariant SOAP" below.
 - **Figures**: the last task of the job runs `plot_descriptor_study.py`, which only reads the outputs
-  above and writes one folder per question into `plots/CoGe/dim-reduction/SOAP/` (`descriptor_settings/`,
-  `maps_by_setting/`, `seed_stability/`, `thickness/`, `selection/`, `covariant/`; what each figure
-  shows is in that folder's README). It leaves `select_gbs.py`'s `FPS/` and `median/` alone.
+  above and writes one folder per question into `plots/CoGe/dim-reduction/SOAP/standard/`
+  (`descriptor_settings/`, `maps_by_setting/`, `seed_stability/`, `thickness/`, `selection/`,
+  `free_labels/`, `stage1/`; what each figure shows is in that folder's README). The old `covariant/`
+  figure (vector sizes) is `SOAP/covariant/vector_sizes/`. It leaves `select_gbs.py`'s `FPS/` and `median/` alone.
   Four of its figures reuse the analyses' own drawing code: `descriptor_sensitivity.draw_sensitivity`
   and `draw_seeds`, and `selection_benchmark.draw_coverage` and `draw_descriptors` return the figure
   unsaved. The plot script adds a title and reading note; the analyses' `plot_*` save their own copy
@@ -471,16 +621,16 @@ python -B src/ML_dscribe_scripts/plot_descriptor_study.py --only thickness selec
 ```
 
 ```
-calculations/ML_dscribe/CoGe/descriptor_sensitivity/
+calculations/ML_dscribe/CoGe/standard/descriptor_sensitivity/
   sensitivity.csv, knob_ranking.csv, seed_robustness.csv, thickness_test.csv, summary.json,
   maps.npz (PCA maps, t-SNE/UMAP maps and their picks), thickness_pcs.npz (PC1/PC2 of every structure),
   sensitivity.png, seed_robustness.png, pca_maps.png
-calculations/ML_dscribe/CoGe/selection_benchmark/
+calculations/ML_dscribe/CoGe/standard/selection_benchmark/
   learning_curves.csv, coverage.csv, summary.csv, existing_lists.csv, picks.csv, summary.json,
   maps.npz (select_gbs.py's maps with families and labels),
   learning_curves.png, coverage.png, descriptor_efficiency.png
-plots/CoGe/dim-reduction/SOAP/
-  descriptor_settings/, maps_by_setting/, seed_stability/, thickness/, selection/, covariant/
+plots/CoGe/dim-reduction/SOAP/standard/
+  descriptor_settings/, maps_by_setting/, seed_stability/, thickness/, selection/, free_labels/, stage1/
 ```
 
 ## Fifth and sixth studies (`representation_study.py`, `geometry_labels.py`, `representation_study.slurm`)
@@ -581,10 +731,92 @@ up to about 100 GB, its longest single task a 3.5 h sketch-map map.
 ```
 calculations/ML_dscribe/CoGe/
   labels/geometry_labels.csv, geometry_labels.json
-  rc6.0_n8_l6_s0.5/interface_r8_both_t4_no_boundary/   krr_summary.csv, krr_by_plane.csv, krr_regression.csv, …
-  selection_benchmark_v2/                               as selection_benchmark/, plus grain_class@<plane> and r2/mae rows
-  representation_study/phase1/, phase2/, thickness/     results.csv, maps.npz, summary.json
-  settings_grid/                                        results.csv, maps.npz, summary.json
+  standard/rc6.0_n8_l6_s0.5/interface_r8_both_t4_no_boundary/   krr_summary.csv, krr_by_plane.csv, krr_regression.csv, …
+  standard/selection_benchmark_v2/                      as selection_benchmark/, plus grain_class@<plane> and r2/mae rows
+  comparison/representation_study/phase1/, phase2/, thickness/   results.csv, maps.npz, summary.json
+  comparison/settings_grid/                             results.csv, maps.npz, summary.json
+plots/CoGe/dim-reduction/SOAP/comparison/representation_response/, settings_grid/
+```
+
+## Covariant SOAP vs symmetry labels (`gb_symmetry.py`, `covariant_vs_labels.py`, since 2026-10-13)
+
+SOAP guide Stage 1 follow-up, preparing Stages 2–3. Covariant SOAP sorts GBs by grain class but
+follows the shift-dependent geometry labels poorly. How much does it say about a property beyond
+what the cell's symmetry alone says? Three kinds of input go into the same model with the same rows
+and folds: covariant SOAP only, covariant SOAP + symmetry labels, symmetry labels only. Grain class,
+handedness and plane are never targets. Nothing new is computed for SOAP; the covariant vectors are
+the reference run `rc6.0_n8_l6_s0.5` (made as `…_lam2`).
+
+**Step 1: `gb_symmetry.py`** (spglib, `src/dft_plots/.venv`). For each of the 1,541 families, the 8x
+cell goes through spglib at symprec 1e-3 Å. Every operation of the space group is turned into a
+Cartesian matrix and sorted against the normal x: `inversion`, `mirror_parallel` (mirror or glide
+parallel to the interface), `twofold_normal` (2 or 2₁ along x), `twofold_inplane`; plus the space
+group, point group and number of rotations.
+- **Database route:** spglib's own list for the input cell can miss operations that do not keep the
+  rectangular input cell. The plain bulk 111/sym00119 gives 1 rotation from the input cell and 12 from
+  the table. So the operations come from spglib's table and are moved into the input frame
+  (x_std = P x + p). Each must map the cell onto itself within 0.1 Å; the largest misfit in the smoke
+  test was 0.001 Å.
+- **Repeats** at 5e-3 and 2e-2 Å, with the families whose labels change listed in the JSON.
+- `lattice` (twinned for the R60 and R70.53 classes) and `motif` (turned for the R90 and R70.53
+  classes) recode the 8 grain classes one to one with handedness (asserted).
+- **Checks a–f** (docstring): the plain-bulk pair is P2₁3; improper operations only in opposite-handed
+  cells; census groups share their labels (up to the enantiomorphic partner); the same labels at 4x
+  and 12x for a sample; inversion centres and parallel mirrors sit at an interface; the operations map
+  the cell onto themselves and match the point-group order.
+- Output `labels/gb_symmetry.csv`, `gb_symmetry.json`. `gb_labels.csv` is not touched.
+
+**Step 2: `covariant_vs_labels.py`** (mlenv). Inputs `cov1` (λ ≥ 1: polar, axial, tensor,
+pseudotensor), `cov01` (+ λ = 0), `cov1+labels`, `cov01+labels`, `labels` (plane, handedness,
+lattice, motif, the four flags, space group as 0/1 columns) and `plane+class`.
+- **Common scale:**
+  - each block is divided by its total variance on the outer training rows (v_b = Σ d²/(2n²));
+  - the covariant blocks are averaged, so each counts the same whatever its width;
+  - the labels are added with a weight w² ∈ {0, 0.1, 0.3, 1, 3, 10} chosen in the inner CV (0 falls back to covariant alone).
+  - Under "standard" scaling, columns with a spread below 1e-5 × the block's largest are left unscaled (576 axial columns in the smoke test), so float32 noise in components that vanish by symmetry is not blown up.
+- **Model and folds:** as `krr_classify.py --regression` (same γ, α, scaling grid, 5 outer × 3 inner
+  folds, seeds 0 and 1 + fold). Groups are the census `distinct_id`, because turned copies of one GB
+  have different covariant vectors. D0985 is dropped. The folds are built once and shared by every input.
+- **Rows:**
+  - `--rows interface`: 3,078 rows, the edge and mid of 1,539 families; never averaged.
+  - `--rows cell` (for GB energy later): one row per family that has a target, with a kernel that averages over swapping edge and mid, so it is the same whichever interface is called edge (tested: swap-invariant to 1e-12 and PSD).
+- **Targets:** any numeric columns of a table (`--targets-table`, `--targets`); the default is the 4
+  geometry labels.
+- **Checks:**
+  1. `plane+class` R² ≤ the in-sample plane × class share + 0.02.
+  2. `cov1` pooled R² ≤ the midpoint between phase 1's kNN R² of C and standard SOAP's KRR R².
+  3. Phase 1's kNN R² of C is recomputed from the loaded vectors to 1e-6.
+- **Also reported:** test rows whose λ = 0 vector coincides with a training row of another GB (shared interfaces), per fold.
+- **Per-fold R²:** a fold's R² counts in `r2_fold_min`/`r2_fold_max` only with ≥ 5 rows and a target variance above 1e-6 of the whole subset's (`n_folds_scored`). A near-constant subset fold gave −6e27 in the smoke test.
+
+```bash
+sbatch src/ML_dscribe_scripts/covariant_vs_labels.slurm      # step 1 (kept if it passed before), then step 2
+src/dft_plots/.venv/bin/python -B src/ML_dscribe_scripts/gb_symmetry.py --dry-run
+source src/mlenv/env.sh; python -B src/ML_dscribe_scripts/covariant_vs_labels.py --dry-run
+```
+
+Smoke tests (qcg2-2, 2026-10-13; `archive/covariant_vs_labels_20261013/smoke/`):
+- **Step 1, `--limit 10`:** 32 families + the 4x/12x sample, 96 POSCARs, 54 s on 8 workers; checks a–f pass.
+- **Step 2, `--limit 10`:**
+  - 60 interface rows or 30 cell rows;
+  - loading the whole 8x catalogue takes 25–30 s (115 s cold);
+  - check 3 matches to 6e-17;
+  - folds take 0.8–5 s;
+  - peak RSS 3.7 GB.
+
+  Its R² values are negative and mean nothing: 46 training rows.
+- **Full run** (estimated from these): step 1 about 15 min on 8 workers (less on the job's 32), step 2 under 30 min; qcg0, 32 CPUs, `--mem=24G`.
+
+**Limit of the labels:** the [111] catalogue coordinates are rounded to about 1e-3 Å, the size of the
+default symprec. At 5e-3 Å every sampled [111] cell gained a 3-fold axis along x that fits to 1.3e-3 Å
+(P-1 → P-3, C2 → P321/P312, P1 → P3, P2₁ → P6₃). Only the space group changed, never the four flags.
+`--space-group-column space_group_5e-3` uses the looser groups. The labels describe the whole cell,
+not each interface.
+
+```
+calculations/ML_dscribe/CoGe/
+  labels/gb_symmetry.csv, gb_symmetry.json
+  comparison/covariant_vs_labels/<rows>_<targets table>/   results.csv, run.json, (predictions.csv); README there
 ```
 
 ## Limits

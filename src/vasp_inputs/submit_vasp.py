@@ -7,6 +7,10 @@ failed earlier and its claim was not deleted). It writes the pending list to
 RECORDS/submissions/<time>/tasks.txt, submits the array, and records the command and job id in
 submit.json there. Slurm logs go to RECORDS/logs/<array job>_<task>.out.
 
+The array runs on qcg3-0 only, unless --nodelist names another node (user, 2026-10-13).
+The pending folders are submitted heaviest first (k-points of the mesh x ENCUT^1.5), so the longest
+runs start first and no long run starts last (--order list keeps the task-list order).
+
 Example (convergence sweep, 2 test points first):
   python3 -B src/vasp_inputs/submit_vasp.py \\
       --tasks results/CoGe_interface/100/convergence_8x/tasks.txt \\
@@ -52,15 +56,29 @@ def pending(folders, records):
     return todo, skipped
 
 
+def cost(rel):
+    """Relative cost of a folder's run: k-points of the full mesh x ENCUT^1.5."""
+    info = vasp_task.identify(vasp_task.PROJECT_ROOT / rel)
+    encut, mesh = info["recipe"]["points"][info["point"]]
+    return mesh[0] * mesh[1] * mesh[2] * encut ** 1.5
+
+
+def heaviest_first(folders):
+    return sorted(folders, key=cost, reverse=True)  # stable: equal costs keep the list order
+
+
 def main(argv=None):
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument("--tasks", type=Path, required=True, help="task list from make_vasp_inputs.py")
     parser.add_argument("--records", type=Path, help="records folder (default: the task list's folder)")
     parser.add_argument("--only", nargs="+", help="keep folders whose path contains one of these strings")
     parser.add_argument("--mem", default="96G", help="memory per array task (default 96G)")
-    parser.add_argument("--nodelist", help="e.g. qcg3-0 (default: any node of the partition)")
+    parser.add_argument("--nodelist", default="qcg3-0",
+                        help="node to run on (default qcg3-0: the GB VASP runs stay on qcg3-0, user 2026-10-13)")
     parser.add_argument("--throttle", type=int, default=8, help="array tasks running at once (default 8)")
     parser.add_argument("--time", default="2-00:00:00", help="time limit per task (default 2 days)")
+    parser.add_argument("--order", choices=("cost", "list"), default="cost",
+                        help="cost: heaviest first (default); list: task-list order")
     parser.add_argument("--dry-run", action="store_true", help="show the pending list and command only")
     args = parser.parse_args(argv)
 
@@ -75,6 +93,8 @@ def main(argv=None):
         print(f"  skip {rel}: {why}")
     if not todo:
         sys.exit("nothing pending")
+    if args.order == "cost":
+        todo = heaviest_first(todo)
     ranks = set()
     for rel in todo:
         info = vasp_task.identify(PROJECT_ROOT / rel)

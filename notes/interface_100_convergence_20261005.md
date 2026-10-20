@@ -232,3 +232,18 @@ POTCAR (Co 02Aug2007, Ge 05Jan2001).
     (`moves.tsv` there); the 9 sym00190 folders written (27 others identical), new `tasks.txt`.
   - The queued test 12919 (sym00177 e500_k1x3x3) is unaffected.
 
+- 2026-10-07 18:29: **12919 (v0.2.0, sym00177 e500_k1x3x3) failed**: NELM 100 reached after 5.9 h.
+  The charge settled, but the moment swung 64 → 68 → ~7 μB and rms(c) never fell below 1.3.
+- 2026-10-13: SCF trials (array 12960, qcg3-0): 4 mixing routes × sym00177, sym00190 at
+  e500_k1x3x3. Records in `results/CoGe_interface/100/convergence_8x/scf_trials_20261013/`. GB VASP
+  runs stay on qcg3-0 only (user).
+- 2026-10-15: **user decision: zero moment for now (MAGMOM = 0)**. Implemented as generator v0.3.0
+  (ISPIN 1; MAGMOM and AMIX_MAG dropped), which waits for the user's check of the golden diff. The
+  trials found a moment-carrying state 0.2–0.3 meV/atom below the zero-moment state in both cells.
+  The `--mem 90G` proposed on 10-13 would have overcommitted qcg3-0 at the heavy points; a memory
+  pilot comes first. Plan, input reasoning and commands: `notes/gb_submission_plan_20261015.md`.
+- 2026-10-15 (later): **user asked for a moment check**: new stage `moment-check` (generator
+  v0.3.0, not yet committed). sym00177 and sym00190 at e500_k1x9x9, ISPIN 2 with the trial `linmag`
+  mixing (AMIX_MAG 0.8, BMIX_MAG 0.0001) and LORBIT 11, in `8x/moment-check/`. It waits for the
+  user's check of its golden diff. The runner now also checks BMIX and BMIX_MAG against the
+  OUTCAR. Details: plan note section 8.1.

@@ -35,7 +35,7 @@ plain-bulk families |C_nb - C| is recorded. (analyse) the region atom counts equ
 reference run; C and D reproduce study 06's kNN values (to 1e-3, two of 2,222 rows); for the
 plain-bulk families |C_nb - stored C| is below 1% of a typical GB's |C|.
 
-Output: calculations/ML_dscribe/CoGe/representation_study/noboundary_control/
+Output: calculations/ML_dscribe/CoGe/comparison/representation_study/noboundary_control/
   python -B src/ML_dscribe_scripts/noboundary_control.py --step describe --workers 12
   python -B src/ML_dscribe_scripts/noboundary_control.py --step analyse
 Slurm: sbatch src/ML_dscribe_scripts/noboundary_control.slurm (both steps).

@@ -110,7 +110,7 @@ Caveats:
 - **The four twin classes exist only on 111.** The pooled 8-class score therefore mixes a 4-class
   question (100/110) with an 8-class one (111). Scores per plane are cleaner.
 - **What the Stage 1.4 KRR learns.** Source: `krr_confusions.csv` in
-  `calculations/ML_dscribe/CoGe/rc6.0_n8_l6_s0.5/interface_r8_both_t4/`. Grouping is `distinct`
+  `calculations/ML_dscribe/CoGe/standard/rc6.0_n8_l6_s0.5/interface_r8_both_t4/`. Grouping is `distinct`
   (copies of one GB stay in one fold); predictions are for all 1,541 families. A "mirror class" is
   a class whose grain B is the mirror image of the true grain B, through a mirror plane that
   contains the GB normal and keeps the box. Each class has 2 mirror classes.

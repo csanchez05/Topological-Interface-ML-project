@@ -20,7 +20,7 @@ different thickness cannot be compared that way.
 --descriptor-type ace uses the ACE vectors and writes into calculations/ML_ACE/CoGe/; the
 structure classes stay those of the SOAP census (they come from the POSCARs).
 
-Outputs, in calculations/ML_dscribe/CoGe/<descriptor tag>/<vector tag>/:
+Outputs, in calculations/ML_dscribe/CoGe/standard/<descriptor tag>/<vector tag>/:
   pooled_families.csv      one row per family
   pooled_merges.csv        pairs of families of different structure that share a vector group
   pooled_by_thickness.csv  counts and separations for each thickness

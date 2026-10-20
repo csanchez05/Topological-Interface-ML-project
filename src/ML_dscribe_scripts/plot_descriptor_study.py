@@ -3,7 +3,10 @@
 
 Reads the outputs of descriptor_sensitivity.py, selection_benchmark.py, the covariant run,
 geometry_labels.py, krr_classify.py --regression and representation_study.py (no new computation
-beyond small re-alignments of stored maps) and writes into plots/CoGe/dim-reduction/SOAP/:
+beyond small re-alignments of stored maps). Standard-SOAP sections go to --out-dir
+(plots/CoGe/dim-reduction/SOAP/standard/), the covariant-only section to --covariant-out-dir
+(.../SOAP/covariant/) and the sections that compare descriptor kinds (representation_response,
+settings_grid) to --comparison-out-dir (.../SOAP/comparison/):
 
   descriptor_settings/   which SOAP setting changes which GBs look alike (part C)
       knob_trends.png          each score against the value of r_cut, n_max, l_max, sigma
@@ -30,13 +33,13 @@ beyond small re-alignments of stored maps) and writes into plots/CoGe/dim-reduct
       existing_lists.png       the six existing lists of 30 against every strategy at n = 30
       picks_full_space.png, picks_map_rules.png  where each strategy picks, on the three maps
       descriptor_efficiency.png  FPS and random learning on every descriptor setting (benchmark v1 only)
-  covariant/             the covariant (lambda-SOAP) vectors, kept for Stage 3
+  vector_sizes/          the covariant (lambda-SOAP) vectors (in --covariant-out-dir)
       vector_sizes.png         polar and axial vector size at each interface, and their mean
   free_labels/           the shift-dependent geometry labels (geometry_labels.py)
       by_grain_class.png       each label by plane and grain class
       edge_vs_mid.png          the two interfaces of one cell
       krr_r2.png               Stage 1.4 KRR on the labels (krr_classify.py --regression)
-  representation_response/  fifth study (representation_study.py, phase 1 and 2 together)
+  representation_response/  fifth study (representation_study.py, phase 1 and 2 together; in --comparison-out-dir)
       bulk_test.png            covariant bulk averages; whole cell against its two interfaces
       maps_<method>.png        the map of A, B, C, D, for all GBs and per plane
       pair_changes.png         map change per pair of representations, against the noise floor
@@ -46,10 +49,25 @@ beyond small re-alignments of stored maps) and writes into plots/CoGe/dim-reduct
       effects.png, map_effects.png  two-way PERMANOVA / ANOVA: region against covariance
       method_numbers.png       each method's own diagnostics
       thickness.png            the thickness check
-  settings_grid/         sixth study (representation_study.py --study settings_grid)
+  settings_grid/         sixth study (representation_study.py --study settings_grid; in --comparison-out-dir)
       variance_shares.png      representation, settings, interaction, seed noise
       anchor_distance.png      each setting's change from the reference setting
       between_settings_and_representations.png
+  stage1/                Stage 1.4 and the 8x r_cut scan at a glance (krr_classify.py, rcut_scan_summary.py)
+      rcut_scan.png            plane and grain-class accuracy and distinct GBs against r_cut (8x, radius 8 A)
+      krr_by_plane.png         Stage 1.4 KRR: plane, handedness and grain class; grain class on each plane
+  grain_class_overview/  every grain-class score of every descriptor in one place (in --comparison-out-dir)
+      grain_class_overview.png, grain_class_overview.csv (the numbers, each with its source file)
+
+--descriptor-type covariant draws the same sections for covariant SOAP ([C_edge | C_mid], lambda >= 1)
+from calculations/ML_dscribe/CoGe/covariant/ into plots/CoGe/dim-reduction/SOAP/covariant/; every
+title then starts with "Covariant SOAP". free_labels/ then holds only krr_r2.png (the labels themselves
+do not depend on the descriptor). Its KRR uses the "census" folds (turned copies kept together).
+
+--descriptor-type ace draws descriptor_settings, maps_by_setting, seed_stability, thickness, selection and
+free_labels (krr_r2.png only) for invariant ACE (every block, each divided by its pristine length) from
+calculations/ML_ACE/CoGe/ into plots/CoGe/dim-reduction/ACE/; every title then starts with "ACE". The
+knob trends add the nu3 expansion (n3, l3); weighting is pow only.
 
 Sections whose inputs are missing are skipped with a note. Existing files are replaced, or with
 --archive-old ROOT first moved to ROOT/<their path in the project> (never overwriting a file there);
@@ -81,27 +99,67 @@ import ml_common as mc
 import selection_benchmark as sb
 from ml_common import sc
 
+TAG = ds.soap_tag(ds.REFERENCE)
 OUT_DIR = mc.plot_root("soap")
+COVARIANT_OUT_DIR = mc.plot_root("covariant")
+COMPARISON_OUT_DIR = mc.COMPARISON_PLOTS
 SENSITIVITY_DIR = mc.OUTPUT_ROOT / "descriptor_sensitivity"
 BENCHMARK_DIR = mc.OUTPUT_ROOT / "selection_benchmark"
 COVARIANT_DIR = sc.COVARIANT_ROOT / "both_interfaces" / ds.soap_tag(ds.REFERENCE)
-REPRESENTATION_DIR = mc.OUTPUT_ROOT / "representation_study"
-GRID_DIR = mc.OUTPUT_ROOT / "settings_grid"
+REPRESENTATION_DIR = mc.COMPARISON_ROOT / "representation_study"
+GRID_DIR = mc.COMPARISON_ROOT / "settings_grid"
 LABELS_FILE = gl.OUT_DIR / gl.CSV_NAME
-KRR_DIR = mc.OUTPUT_ROOT / ds.soap_tag(ds.REFERENCE) / "interface_r8_both_t4_no_boundary"
-SECTIONS = ("descriptor_settings", "maps_by_setting", "seed_stability", "thickness", "selection", "covariant",
-            "free_labels", "representation_response", "settings_grid")
+KRR_DIR = mc.OUTPUT_ROOT / TAG / "interface_r8_both_t4_no_boundary"
+SCAN_DIR = mc.OUTPUT_ROOT / "rcut_scan_8x"
+COVARIANT_ML = mc.OUTPUT_ROOTS["covariant"]
+# Defaults per descriptor type (--descriptor-type); flags override them.
+DEFAULT_DIRS = {
+    "soap": {"sensitivity": SENSITIVITY_DIR, "benchmark": BENCHMARK_DIR, "krr": KRR_DIR, "scan": SCAN_DIR, "out": OUT_DIR},
+    "covariant": {"sensitivity": COVARIANT_ML / "descriptor_sensitivity", "benchmark": COVARIANT_ML / "selection_benchmark",
+                  "krr": COVARIANT_ML / TAG / "interface_r8_both_t4_no_boundary", "scan": COVARIANT_ML / "rcut_scan_8x",
+                  "out": COVARIANT_OUT_DIR},
+    "ace": {"sensitivity": mc.OUTPUT_ROOTS["ace"] / "descriptor_sensitivity",
+            "benchmark": mc.OUTPUT_ROOTS["ace"] / "selection_benchmark",
+            "krr": mc.OUTPUT_ROOTS["ace"] / mc.DEFAULT_DESCRIPTORS["ace"] / "interface_r8_both_t4_no_boundary",
+            "scan": mc.OUTPUT_ROOTS["ace"] / "rcut_scan_8x", "out": mc.plot_root("ace")}}
+# Inputs of grain_class_overview beyond the chosen type's own.
+BENCHMARK_V2_DIR = mc.OUTPUT_ROOT / "selection_benchmark_v2"
+ACE_KRR_DIR = mc.OUTPUT_ROOTS["ace"] / mc.DEFAULT_DESCRIPTORS["ace"] / "interface_r8_both_t4"
+SECTIONS = ("descriptor_settings", "maps_by_setting", "seed_stability", "thickness", "selection", "vector_sizes",
+            "free_labels", "stage1", "representation_response", "settings_grid", "grain_class_overview")
+COVARIANT_SECTIONS = ("vector_sizes",)
+COMPARISON_SECTIONS = ("representation_response", "settings_grid", "grain_class_overview")
+# Sections that exist for --descriptor-type covariant (descriptor_grid.COVARIANT_PLOT_SECTIONS).
+COVARIANT_TYPE_SECTIONS = ("descriptor_settings", "maps_by_setting", "seed_stability", "thickness", "selection",
+                           "vector_sizes", "free_labels", "stage1")
+# Sections that exist for --descriptor-type ace.
+ACE_TYPE_SECTIONS = ("descriptor_settings", "maps_by_setting", "seed_stability", "thickness", "selection", "free_labels")
+TYPE_SECTIONS = {"covariant": COVARIANT_TYPE_SECTIONS, "ace": ACE_TYPE_SECTIONS}
+KIND_TITLES = {"soap": "", "covariant": "Covariant SOAP", "ace": "ACE"}
+# The reference GB vector of each type, as the notes describe it.
+REFERENCE_VECTORS = {
+    "soap": "atoms within 8 Å of both interfaces, [Co mean | Ge mean], no scaling",
+    "covariant": "[C_edge | C_mid]: the lambda = 1 and 2 blocks (polar, axial, tensor, pseudotensor) of the atoms "
+                 "within 8 Å of each interface, the two interfaces joined (never averaged), no scaling",
+    "ace": "atoms within 8 Å of both interfaces, [Co mean | Ge mean] of the blocks nu1, nu2, nu3 even and odd, "
+           "each block divided by its length in pristine bulk"}
+# The reference setting in words, and the name of the descriptor in titles.
+REFERENCE_SETTINGS = {"soap": "r_cut 6, n_max 8, l_max 6, sigma 0.5", "covariant": "r_cut 6, n_max 8, l_max 6, sigma 0.5",
+                      "ace": "r_cut 6, n_max 8, l_max 6, sigma 0.5, n3 4, l3 4"}
+SETTING_WORDS = {"soap": "SOAP", "covariant": "SOAP", "ace": "ACE"}
 # Folders that hold only results from the real structures.
 PROTECTED = (sc.PROJECT_ROOT / "plots" / "CoGe", sc.PROJECT_ROOT / "results")
 TITLE_PREFIX = ""  # set by --title-prefix
 ARCHIVE_ROOT = None  # set by --archive-old
+DESCRIPTOR_TYPE = "soap"  # set by --descriptor-type
+KIND = ""  # "Covariant SOAP" while a covariant section is drawn; starts every title
 
 INK, MUTED, GRID = ds.INK, ds.MUTED, ds.GRID
 BLUE, ORANGE, AQUA, YELLOW = sb.SLOTS
 GRAY = sb.GRAY
-NUMERIC_KNOBS = ("r_cut", "n_max", "l_max", "sigma")
+NUMERIC_KNOBS = ("r_cut", "n_max", "l_max", "sigma", "n3", "l3")
 UNITS = {"r_cut": "r_cut (Å)", "n_max": "n_max (radial functions)", "l_max": "l_max (angular channels)",
-         "sigma": "sigma (Å, Gaussian width)"}
+         "sigma": "sigma (Å, Gaussian width)", "n3": "n3 (radial functions of nu3)", "l3": "l3 (angular channels of nu3)"}
 # Scores against the baseline: column, label, value for "no change".
 SCORES = (("spearman", "Distance rank correlation", 1.0),
           ("knn10_kept", "10 nearest neighbours kept", 1.0),
@@ -175,6 +233,8 @@ def _finish(plt, fig, path, title=None, note=None, rect_bottom=0.0):
     Both are wrapped to the figure width; their height is set aside in inches, so a tall figure
     gets no extra gap and a narrow one no cut-off title.
     """
+    if KIND:
+        title = f"{KIND}: {title}" if title else KIND
     if TITLE_PREFIX:
         title = f"{TITLE_PREFIX}: {title}" if title else TITLE_PREFIX
     width, height = fig.get_size_inches()
@@ -268,13 +328,20 @@ def present_knobs(table):
     return [k for k in NUMERIC_KNOBS if (table["knob"] == k).any()]
 
 
+def reference_value(knob):
+    """The reference setting's value of a numeric knob (ACE: ace_grid.REFERENCE, which adds n3 and l3)."""
+    if DESCRIPTOR_TYPE == "ace":
+        return float(ds.ace_grid_module().REFERENCE[knob])
+    return ds.REFERENCE[knob]
+
+
 def knob_trends(table, path, n_gbs=None):
     knobs = present_knobs(table)
     plt, fig, axes = _figure(len(SCORES), len(knobs), 3.2 * len(knobs) + 0.6, 2.1 * len(SCORES) + 0.9,
                              sharey="row")
     for col, knob in enumerate(knobs):
         part = table[table["knob"] == knob]
-        ref_value = ds.REFERENCE[knob]
+        ref_value = reference_value(knob)
         x = np.array([float(v) for v in part["value"]] + [ref_value])
         order = np.argsort(x)
         for row, (column, label, same) in enumerate(SCORES):
@@ -293,9 +360,12 @@ def knob_trends(table, path, n_gbs=None):
             if row == 0:
                 ax.set_title(knob, fontsize=9.5, color=INK)
     axes[0, 0].legend(loc="lower left", fontsize=7.5, frameon=False)
-    _finish(plt, fig, path, "How far each SOAP setting moves the GBs from the reference (r_cut 6, n_max 8, l_max 6, sigma 0.5)",
+    no_odd = (" At l3 2 the nu3_odd block vanishes in pristine bulk, so that run is compared with the reference, "
+              "both without nu3_odd." if DESCRIPTOR_TYPE == "ace" and "l3" in knobs else "")
+    _finish(plt, fig, path, f"How far each {SETTING_WORDS[DESCRIPTOR_TYPE]} setting moves the GBs from the reference "
+            f"({REFERENCE_SETTINGS[DESCRIPTOR_TYPE]})",
             f"One setting changed at a time, {_gbs(n_gbs)} at 8x. Dashed line and open circle: no change. "
-            "Lower correlation / fewer shared neighbours or picks / larger Procrustes = a bigger change.")
+            f"Lower correlation / fewer shared neighbours or picks / larger Procrustes = a bigger change.{no_odd}")
 
 
 def weighting(table, path):
@@ -309,6 +379,8 @@ def weighting(table, path):
     y = np.arange(len(r_cuts))[::-1]
     for ax, (column, label, same) in zip(axes[0], SCORES):
         for kind, color, shift in (("pow", BLUE, 0.12), ("poly", ORANGE, -0.12)):
+            if not (part["kind"] == kind).any():  # ACE has pow only
+                continue
             values = part[part["kind"] == kind].set_index("r_cut").reindex(r_cuts)[column]
             ax.scatter(values, y + shift, s=36, color=color, linewidths=0, zorder=3,
                        label={"pow": "pow (Willatt 2018: r0 3, m 4)", "poly": "poly (Caro 2019: r0 = r_cut, m 2)"}[kind])
@@ -324,22 +396,23 @@ def weighting(table, path):
 
 
 def region_and_processing(table, path):
-    part = table[table["knob"].isin(["region", "processing"])]
+    part = table[table["knob"].isin(["region", "processing", "blocks"])]
     if part.empty:
         return
     labels = [f"{k}: {v}" for k, v in zip(part["knob"], part["value"])]
     y = np.arange(len(part))[::-1]
     plt, fig, axes = _figure(1, len(SCORES), 3.3 * len(SCORES), 0.32 * len(part) + 1.6, sharey=True)
+    color_of = {"region": BLUE, "processing": ORANGE, "blocks": KNOB_COLORS["blocks"]}
     for ax, (column, label, same) in zip(axes[0], SCORES):
-        colors = [BLUE if k == "region" else ORANGE for k in part["knob"]]
-        ax.scatter(part[column], y, s=36, color=colors, linewidths=0, zorder=3)
+        ax.scatter(part[column], y, s=36, color=[color_of[k] for k in part["knob"]], linewidths=0, zorder=3)
         ax.axvline(same, color=MUTED, linewidth=0.8, linestyle="--")
         ax.set_title(label, fontsize=9, color=INK)
         ds._style(ax)
     axes[0, 0].set_yticks(y, labels, fontsize=8.5)
-    _finish(plt, fig, path, "Which atoms are averaged (region, blue) and how the vector is scaled (processing, orange)",
-            "Against the reference vector: atoms within 8 Å of both interfaces, [Co mean | Ge mean], no scaling. "
-            "Dashed line: no change.")
+    blocks = ", and which blocks are joined (blocks, brown)" if (part["knob"] == "blocks").any() else ""
+    _finish(plt, fig, path, "Which atoms are averaged (region, blue) and how the vector is scaled (processing, orange)"
+            + blocks,
+            f"Against the reference vector: {REFERENCE_VECTORS[DESCRIPTOR_TYPE]}. Dashed line: no change.")
 
 
 def knob_ranking(ranking, path):
@@ -358,8 +431,10 @@ def knob_ranking(ranking, path):
     for ax, (column, title) in zip(axes[0], panels):
         ax.barh(y, ranking[column], height=0.65, color=BLUE, linewidth=0)
         for yy, value in zip(y, ranking[column]):
-            ax.text(value, yy, f" {value:.2f}" if column != "picks_lost" else f" {value:.0f}",
-                    va="center", fontsize=7.5, color=INK)
+            # Two decimals would print a small change (covariant l_max: 0.003) as 0.00.
+            text = f"{value:.0f}" if column == "picks_lost" else f"{value:.2f}" if value == 0 or abs(value) >= 0.01 \
+                else f"{value:.1e}"
+            ax.text(value, yy, f" {text}", va="center", fontsize=7.5, color=INK)
         ax.set_title(title, fontsize=9, color=INK)
         ds._style(ax)
     axes[0, 0].set_yticks(y, [textwrap.fill(f"{k} ({v})", 38) for k, v in zip(ranking["knob"], ranking["values"])],
@@ -376,13 +451,13 @@ def pca_dimensions(table, path, n_gbs=None):
     plt, fig, axes = _figure(len(rows), len(knobs), 3.2 * len(knobs) + 0.6, 1.9 * len(rows) + 0.9, sharey="row")
     for col, knob in enumerate(knobs):
         part = table[table["knob"] == knob]
-        x = np.array([float(v) for v in part["value"]] + [ds.REFERENCE[knob]])
+        x = np.array([float(v) for v in part["value"]] + [reference_value(knob)])
         order = np.argsort(x)
         for row, (column, label) in enumerate(rows):
             ax = axes[row, col]
             y = np.append(part[column].to_numpy(dtype=float), reference[column])
             ax.plot(x[order], y[order], color=AQUA, linewidth=2, marker="o", markersize=5, zorder=3)
-            ax.scatter([ds.REFERENCE[knob]], [reference[column]], s=70, facecolor="white", edgecolor=INK,
+            ax.scatter([reference_value(knob)], [reference[column]], s=70, facecolor="white", edgecolor=INK,
                        linewidth=1.2, zorder=4)
             ds._style(ax)
             ax.grid(axis="y", color=GRID, linewidth=0.5)
@@ -398,7 +473,7 @@ def pca_dimensions(table, path, n_gbs=None):
 
 
 KNOB_COLORS = {"r_cut": BLUE, "n_max": ORANGE, "l_max": AQUA, "sigma": YELLOW, "weighting": "#e87ba4",
-               "region": "#008300", "processing": "#4a3aa7"}
+               "region": "#008300", "processing": "#4a3aa7", "blocks": "#9b5b16", "n3": "#c0392b", "l3": "#5f6b00"}
 
 
 def cost(table, path):
@@ -430,10 +505,13 @@ def cost(table, path):
             ax.legend(loc="lower right", fontsize=7.5, frameon=False)
     axes[0, 0].set_ylabel("1 - distance rank correlation with the reference (log)", fontsize=8.5, color=INK)
     _finish(plt, fig, path, "Does a longer vector change the picture more?",
-            "Each point is one setting against the reference (r_cut 6, n_max 8, l_max 6, sigma 0.5); dashed line: "
+            f"Each point is one setting against the reference ({REFERENCE_SETTINGS[DESCRIPTOR_TYPE]}); dashed line: "
             f"the reference length. Higher = a bigger change; values below {floor:g} are drawn at {floor:g}. "
-            "Only n_max, l_max and the single mean over all atoms change the length. SOAP time is not shown: the "
-            "stored timings are not "
+            + ("Only n_max, l_max, the blocks joined and the region (one interface, or the whole cell) change the "
+               "length. " if DESCRIPTOR_TYPE == "covariant" else
+               "Only n_max, l_max, n3, l3 and the blocks joined change the length. " if DESCRIPTOR_TYPE == "ace" else
+               "Only n_max, l_max and the single mean over all atoms change the length. ")
+            + f"{SETTING_WORDS[DESCRIPTOR_TYPE]} time is not shown: the stored timings are not "
             "comparable between runs (shared timings, runs that waited on each other's file reads).")
 
 
@@ -451,13 +529,14 @@ def descriptor_settings(sensitivity_dir, out):
     knob_ranking(ranking, folder / "knob_ranking.png")
     cost(table, folder / "cost.png")
     plt, fig = ds.draw_sensitivity(table)
+    weighted = (" Weighting at r_cut 8 and 12 is compared with the unweighted run at the same r_cut."
+                if (table["knob"] == "weighting").any() else "")
     _finish(plt, fig, folder / "overview.png",
             "Every setting and every score in one chart: how far does each setting move the GBs from the reference?",
             "One bar per setting, grouped by knob; dashed line = no change (the reference against itself). For "
             "rank correlation, neighbours kept and FPS picks, shorter bars = bigger change; for Procrustes and the "
             "two reconstruction errors (GFRE), longer bars = bigger change. GFRE is not 0 for the reference itself, "
-            "so its dashed line is the reference's own value. Weighting at r_cut 8 and 12 is compared with the "
-            "unweighted run at the same r_cut.")
+            f"so its dashed line is the reference's own value.{weighted}")
 
 
 # --------------------------------------------------------------------------- maps by setting
@@ -472,7 +551,7 @@ def maps_by_setting(sensitivity_dir, out):
         embedded = {key: data[key] for key in data.files if "__seed" in key and not key.endswith(("__fps", "__median"))}
     folder = out / "maps_by_setting"
     knob_of = dict(zip(table["name"], table["knob"]))
-    for knob in ds.KNOBS:
+    for knob in ds.ALL_KNOBS:
         members = ["reference"] + [n for n in names if knob_of.get(n) == knob]
         if len(members) < 2:
             continue
@@ -602,8 +681,10 @@ def thickness(sensitivity_dir, out):
         sample = set(rng.choice(unique, size=min(150, len(unique)), replace=False))
         thicknesses = np.unique(thick)
         plt, fig, axes = _figure(1, 2, 12, 4.6)
+        interface = ("Interface vector [C_edge | C_mid] (atoms within 8 Å of each interface)"
+                     if DESCRIPTOR_TYPE == "covariant" else "Interface vector (atoms within 8 Å of the interfaces)")
         for ax, kind, title in ((axes[0, 0], "global", "Global vector (mean over the whole cell)"),
-                                (axes[0, 1], "interface", "Interface vector (atoms within 8 Å of the interfaces)")):
+                                (axes[0, 1], "interface", interface)):
             values = pcs[kind][:, 0]
             for f in sample:
                 rows = np.where(family == f)[0]
@@ -712,7 +793,10 @@ def learning_curves(summary, majority, n_classes, label, path):
 
 
 def existing_lists(existing, n_groups, path, n_gbs=None):
-    existing = existing[existing["n"] == 30]
+    # Not n == 30: a list loses the members outside the pool (selection_benchmark.py's left_out_outside_pool).
+    union = existing["list"].str.contains("union")
+    union_size = f" ({int(existing.loc[union, 'n'].iloc[0])} GBs)" if union.any() else ""
+    existing = existing[~union]
     if existing.empty:
         return
     panels = (("coverage_radius", "coverage radius / median distance\n(lower = no GB far from a pick)"),
@@ -739,10 +823,17 @@ def existing_lists(existing, n_groups, path, n_gbs=None):
         ds._style(ax)
     pretty = [n.replace("existing ", "existing: ").replace("strategy ", "") for n in names]
     pretty = [STRATEGY_NAMES.get(p, p) for p in pretty]
+    sizes = grouped["n"].first().reindex(names)
+    pretty = [p if sizes[n] == 30 else f"{p} ({sizes[n]} GBs)" for p, n in zip(pretty, names)]
+    note = ("Accuracy is on all GBs not picked. Gray bar: range over the random draws (random, stratified). "
+            f"The union of the six lists{union_size} is left out: it is not comparable on size.")
+    if "left_out_outside_pool" in existing and existing["left_out_outside_pool"].notna().any():
+        dropped = sorted({s for v in existing["left_out_outside_pool"].dropna() for s in v.split("; ")})
+        note += (f" Lists marked with a size held {len(dropped)} structure(s) outside the pool, left out here: "
+                 + ", ".join(_family_of(s) for s in dropped) + " (no boundary).")
     axes[0, 0].set_yticks(y, pretty, fontsize=8)
     _finish(plt, fig, path, f"The six existing lists of 30 (orange) against every strategy picking 30 from {_gbs(n_gbs)} (blue)",
-            "Accuracy is on all GBs not picked. Gray bar: range over the random draws (random, stratified). "
-            "The union of the six lists (162 GBs) is left out: it is not comparable on size.")
+            note)
 
 
 def picks_on_maps(picks, maps_path, names, path, title):
@@ -815,8 +906,10 @@ def selection(benchmark_dir, out, krr_dir=None):
                         fontsize=7, color=MUTED, xytext=(3, -10), textcoords="offset points")
         part = summary[(summary["label"] == "grain_class") & summary["strategy"].isin(["fps", "random"])]
         spread = part.groupby("strategy")["accuracy_std"].median()
-        _finish(plt, fig, folder / "descriptor_efficiency.png", "Does any SOAP setting make grain class easier to learn?",
-                "Each point: grain-class test accuracy averaged over n = 5-100 labelled GBs, for one descriptor setting "
+        _finish(plt, fig, folder / "descriptor_efficiency.png",
+                f"Does any {SETTING_WORDS[DESCRIPTOR_TYPE]} setting make grain class easier to learn?",
+                f"Each point: grain-class test accuracy averaged over n = {part['n'].min()}-{part['n'].max()} labelled "
+                "GBs, for one descriptor setting "
                 "(dashed: the reference; dotted: always answering the largest class, "
                 f"{majority['grain_class']:.3f}). Between test splits, the accuracy at one n varies by about "
                 f"{spread.get('fps', np.nan):.2f} for FPS and {spread.get('random', np.nan):.2f} for random "
@@ -883,8 +976,9 @@ def covariant(covariant_dir, out):
         ax.set_title(f"{name}: averaging both interfaces", fontsize=9, color=INK)
         ds._style(ax)
     zero = {name: int((np.maximum(sizes[name]["edge"], sizes[name]["mid"]) < 1e-3).sum()) for name in sizes}
-    _finish(plt, fig, out / "covariant" / "vector_sizes.png",
-            f"Covariant SOAP: how large are the polar and axial (spin-like) vectors at each interface? "
+    _finish(plt, fig, out / "vector_sizes" / "vector_sizes.png",
+            # A covariant run already starts every title with "Covariant SOAP" (KIND); a standard run does not.
+            f"{'' if KIND else 'Covariant SOAP: '}How large are the polar and axial (spin-like) vectors at each interface? "
             f"(8x, {len(rows):,} GB families)",
             f"Dashed lines at 1e-3: below that a vector is zero by symmetry (polar {zero['polar']}, axial {zero['axial']} "
             "GBs). Right panels: points below the diagonal lose their vector when both interfaces are averaged.")
@@ -961,6 +1055,25 @@ def _gbs(count):
     return f"{count:,} distinct GBs" if count else "the distinct GBs"
 
 
+def _family_of(source):
+    """'111/sym00119' from structures/CoGeGrainBoundaries/CoGe_111_GBs/Interface/sym00119/8x/POSCAR."""
+    parts = Path(source).parts
+    planes = [p for p in parts if p.startswith("CoGe_") and p.endswith("_GBs")]
+    syms = [p for p in parts if p.startswith("sym")]
+    return f"{planes[0][5:-4]}/{syms[0]}" if planes and syms else source
+
+
+def headline_rows(table):
+    """Rows of the strictest fold grouping a krr_classify.py table holds: "census" (--census-grouping,
+    turned copies kept together), else "distinct" (coinciding vectors kept together)."""
+    if "grouping" not in table:
+        return table
+    for grouping in ("census", "distinct"):
+        if (table["grouping"] == grouping).any():
+            return table[table["grouping"] == grouping]
+    return table
+
+
 # --------------------------------------------------------------------------- selection (v2 additions)
 
 def grain_class_per_plane(summary, meta, krr_dir, path):
@@ -974,8 +1087,7 @@ def grain_class_per_plane(summary, meta, krr_dir, path):
     if krr_dir is not None and (Path(krr_dir) / "krr_by_plane.csv").is_file():
         krr = pd.read_csv(Path(krr_dir) / "krr_by_plane.csv", dtype={"plane": str})
         krr = krr[(krr["label"] == "grain_class") & (krr["model"] == "krr")]
-        if "grouping" in krr and (krr["grouping"] == "distinct").any():
-            krr = krr[krr["grouping"] == "distinct"]
+        krr = headline_rows(krr)
     chance = {"100": 0.25, "110": 0.25, "111": 0.125}
     plane_majority = meta.get("grain_class_majority_per_plane", {})
     plt, fig, axes = _figure(1, len(planes), 4.4 * len(planes), 5.4, sharey=True)
@@ -1029,8 +1141,7 @@ def free_label_curves(summary, labels, krr_dir, path):
     if krr_dir is not None and (Path(krr_dir) / "krr_regression.csv").is_file():
         full = pd.read_csv(Path(krr_dir) / "krr_regression.csv")
         full = full[(full["dataset"] == "all") & (full["scored_on"] == "all")]
-        if "grouping" in full and (full["grouping"] == "distinct").any():
-            full = full[full["grouping"] == "distinct"]
+        full = headline_rows(full)
     models = (("krr", "KRR (settings by leave-one-out on the picks)"), ("1nn", "1-nearest neighbour"))
     plt, fig, axes = _figure(len(models), len(labels), 3.6 * len(labels), 3.0 * len(models) + 1.6, sharex=True)
     handles = {}
@@ -1075,10 +1186,15 @@ def free_label_curves(summary, labels, krr_dir, path):
 
 # --------------------------------------------------------------------------- free labels
 
-def free_labels(labels_file, krr_dir, out):
-    """What the geometry labels look like, and how well the Stage 1.4 KRR predicts them."""
+def free_labels(labels_file, krr_dir, out, label_figures=True):
+    """What the geometry labels look like, and how well the Stage 1.4 KRR predicts them.
+
+    label_figures=False draws only krr_r2.png (the labels do not depend on the descriptor)."""
     import pandas as pd
     folder = out / "free_labels"
+    if not label_figures:
+        free_label_krr(krr_dir, folder)
+        return
     table = pd.read_csv(labels_file, dtype={"plane": str})
     meta_path = Path(labels_file).with_name(gl.JSON_NAME)
     meta = json.loads(meta_path.read_text()) if meta_path.is_file() else {}
@@ -1143,15 +1259,19 @@ def free_labels(labels_file, krr_dir, out):
             f"{len(both):,} distinct GBs at 8x. On the dashed line both interfaces are alike; the fifth study keeps "
             "edge and mid as separate rows because they need not be.")
 
-    # 3. Stage 1.4 KRR on the labels
+    free_label_krr(krr_dir, folder)
+
+
+def free_label_krr(krr_dir, folder):
+    """3. Stage 1.4 KRR on the labels: krr_r2.png."""
+    import pandas as pd
     path = Path(krr_dir) / "krr_regression.csv" if krr_dir is not None else None
     if path is None or not path.is_file():
         print(f"  skipped free_labels/krr_r2.png: {path} not found")
         return
     krr = pd.read_csv(path)
     krr = krr[krr["dataset"] == "all"]
-    if "grouping" in krr and (krr["grouping"] == "distinct").any():
-        krr = krr[krr["grouping"] == "distinct"]
+    krr = headline_rows(krr)
     scopes = [s for s in ("all", *sc.PLANES) if (krr["scored_on"].astype(str) == s).any()]
     plt, fig, axes = _figure(1, len(gl.TARGETS), 3.4 * len(gl.TARGETS), 3.6, sharey=True)
     width = 0.38
@@ -1165,18 +1285,343 @@ def free_labels(labels_file, krr_dir, out):
         ax.axhline(0, color=MUTED, linewidth=0.8)
         ax.set_xticks(x, ["all GBs" if s == "all" else f"{s} GBs" for s in scopes], fontsize=7.5)
         ax.set_title(GEOMETRY_NAMES.get(label, label), fontsize=8.5, color=INK)
-        bottom = min(-0.2, ax.get_ylim()[0])
-        ax.set_ylim(bottom, 1.22)  # R² <= 1; the band above holds the legend
-        ax.set_yticks([tick for tick in ax.get_yticks() if bottom <= tick <= 1.0 + 1e-9])
         ds._style(ax)
         ax.grid(axis="y", color=GRID, linewidth=0.5)
         ax.grid(axis="x", visible=False)
-    axes[0, 0].set_ylabel("R², 5-fold, coinciding vectors in one fold", fontsize=8, color=INK)
+    # The y axis is shared, so its range comes from every bar (one panel's autoscale would cut the others' bars).
+    lowest = np.nanmin(krr.loc[krr["target"].isin(gl.TARGETS), ["krr_r2", "knn_r2"]].to_numpy(float))
+    bottom = min(-0.2, 1.08 * lowest)
+    axes[0, 0].set_ylim(bottom, 1.22)  # R² <= 1; the band above holds the legend
+    axes[0, 0].set_yticks([tick for tick in axes[0, 0].get_yticks() if bottom <= tick <= 1.0 + 1e-9])
+    axes[0, 0].set_ylabel("R² (held-out folds)", fontsize=8, color=INK)
     axes[0, 0].legend(loc="upper left", ncol=2, fontsize=7.5, frameon=False)
     _finish(plt, fig, folder / "krr_r2.png",
             "Stage 1.4 with free labels: how well does the GB vector predict the interface geometry?",
-            "krr_classify.py --regression (one model on all planes, scored on all GBs and on each plane). R² = 0: no "
-            "better than the training mean; 1: perfect.")
+            f"krr_classify.py --regression (one model on all planes, scored on all GBs and on each plane), 5-fold nested "
+            f"cross-validation with {fold_rule(krr)}. R² = 0: no better than the training mean; 1: perfect.")
+
+
+def fold_rule(table):
+    """How a krr_classify.py table kept copies apart, in words (from its grouping column)."""
+    grouping = str(table["grouping"].iloc[0]) if "grouping" in table and len(table) else "distinct"
+    return ("copies of one structure (census, turned copies too) in one fold" if grouping == "census"
+            else "coinciding vectors in one fold")
+
+
+# --------------------------------------------------------------------------- stage 1
+
+CHANCE = {"100": 0.25, "110": 0.25, "111": 0.125}
+
+
+def rcut_scan_figure(scan, path):
+    """Accuracy and distinct GBs against r_cut, from rcut_scan_summary.csv (8x, interface radius 8 A)."""
+    x = scan["r_cut"].to_numpy(float)
+    plt, fig, axes = _figure(1, 3, 15, 4.4)
+    ax = axes[0, 0]
+    for label, color, name in (("plane", BLUE, "plane"), ("grain_class", ORANGE, "grain class")):
+        ax.plot(x, scan[f"acc_{label}"], color=color, linewidth=2, marker="o", markersize=5, label=f"{name}, KRR")
+        if f"knn_{label}" in scan:
+            ax.plot(x, scan[f"knn_{label}"], color=color, linewidth=1.2, linestyle="--", label=f"{name}, kNN")
+        ax.plot(x, scan[f"baseline_{label}"], color=color, linewidth=1, linestyle=":")
+    ax.set_ylim(0, 1.25)  # the band above 1 holds the legend, clear of lines at 1.0
+    ax.set_yticks(np.arange(0, 1.01, 0.2))
+    ax.set_ylabel("accuracy, all planes pooled", fontsize=8.5, color=INK)
+    ax.set_title("plane and grain class (dotted: always the largest class)", fontsize=9, color=INK)
+    ax.legend(loc="upper center", ncol=2, fontsize=7.5, frameon=False)
+    ax = axes[0, 1]
+    for plane, color in PLANE_COLORS.items():
+        column = f"acc_grain_class_{plane}"
+        if column in scan:
+            ax.plot(x, scan[column], color=color, linewidth=2, marker="o", markersize=5, label=f"{plane} GBs")
+            ax.axhline(CHANCE[plane], color=color, linewidth=0.9, linestyle="-.")
+    ax.set_ylim(0, 1.25)
+    ax.set_yticks(np.arange(0, 1.01, 0.2))
+    ax.set_ylabel("grain-class accuracy, model of one plane", fontsize=8.5, color=INK)
+    ax.set_title("grain class, one model per plane (dash-dot: chance)", fontsize=9, color=INK)
+    ax.legend(loc="upper center", ncol=3, fontsize=7.5, frameon=False)
+    ax = axes[0, 2]
+    ax.plot(x, scan["n_distinct"], color=AQUA, linewidth=2, marker="o", markersize=5, label="distinct GB vectors")
+    structures = pd_numeric(scan.get("n_distinct_by_structure"))
+    if DESCRIPTOR_TYPE == "covariant":
+        # No coinciding vectors, so the structure check confirms every cell; compare with the census instead.
+        import pandas as pd
+        census = pd.read_csv(mc.CENSUS)["structure_class"].nunique()
+        ax.axhline(census, color=MUTED, linewidth=1, linestyle="--", label=f"distinct GBs, structure census ({census:,})")
+    elif structures is not None and np.isfinite(structures).any():
+        ax.axhline(np.nanmax(structures), color=MUTED, linewidth=1, linestyle="--",
+                   label=f"distinct structures ({np.nanmax(structures):,.0f})")
+    ax.set_ylabel(f"distinct GBs (of {int(scan['n_families'].max()):,} families)", fontsize=8.5, color=INK)
+    ax.set_title("Step 1.5: how many GBs the vector tells apart", fontsize=9, color=INK)
+    # Covariant: the points sit at the top (every family) and the census line at the bottom.
+    ax.legend(loc="center right" if DESCRIPTOR_TYPE == "covariant" else "lower right", fontsize=7.5, frameon=False)
+    for ax in axes[0]:
+        ax.axvline(ds.REFERENCE["r_cut"], color=GRID, linewidth=1.5, zorder=0)
+        ax.set_xticks(x, [f"{v:g}" for v in x])
+        ax.set_xlabel("r_cut (Å)", fontsize=8.5, color=INK)
+        ds._style(ax)
+        ax.grid(axis="y", color=GRID, linewidth=0.5)
+    _finish(plt, fig, path, "Stage 1 at 8x: how does the cutoff r_cut change what the GB vector tells apart and predicts?",
+            f"One descriptor run per r_cut (n_max 8, l_max 6, sigma 0.5), {int(scan['n_families'].max()):,} GB families "
+            f"at 8x, interface radius 8 Å (gray line: the reference r_cut 6). KRR: 5-fold nested cross-validation with "
+            f"{fold_rule(scan)}.")
+
+
+def pd_numeric(values):
+    import pandas as pd
+    return None if values is None else pd.to_numeric(values, errors="coerce").to_numpy(float)
+
+
+def krr_figure(krr_dir, path):
+    """Stage 1.4 KRR: pooled scores, and grain class on each plane (pooled model and per-plane models)."""
+    import pandas as pd
+    summary = headline_rows(pd.read_csv(Path(krr_dir) / "krr_summary.csv", dtype={"dataset": str}))
+    pooled = summary[summary["dataset"] == "all"].set_index("label")
+    labels = [label for label in ("plane", "handedness", "grain_class") if label in pooled.index]
+    by_plane_path = Path(krr_dir) / "krr_by_plane.csv"
+    by_plane = pd.DataFrame()
+    if by_plane_path.is_file():
+        by_plane = headline_rows(pd.read_csv(by_plane_path, dtype={"plane": str}))
+        by_plane = by_plane[(by_plane["label"] == "grain_class") & (by_plane["model"] == "krr")]
+    plt, fig, axes = _figure(1, 2, 12.5, 4.4, gridspec_kw={"width_ratios": [1, 1.25]})
+    ax = axes[0, 0]
+    x = np.arange(len(labels))
+    ax.bar(x - 0.18, [pooled.loc[l, "krr_accuracy"] for l in labels], width=0.36, color=BLUE, label="KRR")
+    ax.bar(x + 0.18, [pooled.loc[l, "knn_accuracy"] for l in labels], width=0.36, color=ORANGE, label="kNN")
+    ax.scatter(x, [pooled.loc[l, "baseline_majority"] for l in labels], marker="_", s=900, color=INK, zorder=4,
+               label="always the largest class")
+    for xx, label in zip(x, labels):
+        ax.text(xx - 0.18, pooled.loc[label, "krr_accuracy"], f"{pooled.loc[label, 'krr_accuracy']:.2f}", ha="center",
+                va="bottom", fontsize=7.5, color=INK)
+    ax.set_xticks(x, [LABEL_NAMES.get(l, l) for l in labels], fontsize=8.5)
+    ax.set_ylim(0, 1.3)  # the band above 1 holds the legend, clear of bars at 1.00
+    ax.set_yticks(np.arange(0, 1.01, 0.2))
+    ax.set_ylabel("accuracy, all planes pooled", fontsize=8.5, color=INK)
+    ax.set_title("one model for all planes", fontsize=9, color=INK)
+    ax.legend(loc="upper right", fontsize=7.5, frameon=False, ncol=3, markerscale=0.4)
+    ax = axes[0, 1]
+    planes = [p for p in sc.PLANES if not by_plane.empty and (by_plane["plane"] == p).any()]
+    x = np.arange(len(planes))
+    for offset, trained, color, name in ((-0.18, "all planes", BLUE, "one model for all planes"),
+                                         (0.18, None, AQUA, "one model per plane")):
+        values = []
+        for plane in planes:
+            row = by_plane[(by_plane["plane"] == plane) & (by_plane["trained_on"] == (trained or f"{plane} only"))]
+            values.append(float(row["accuracy"].iloc[0]) if not row.empty else np.nan)
+        ax.bar(x + offset, values, width=0.36, color=color, label=name)
+        for xx, value in zip(x + offset, values):
+            if np.isfinite(value):
+                ax.text(xx, value, f"{value:.2f}", ha="center", va="bottom", fontsize=7.5, color=INK)
+    for xx, plane in zip(x, planes):
+        row = by_plane[(by_plane["plane"] == plane) & (by_plane["trained_on"] == "all planes")]
+        ax.scatter([xx], [CHANCE[plane]], marker="x", s=45, linewidths=1.6, color=MUTED, zorder=5,
+                   label="chance (1 / possible classes)" if xx == x[0] else None)
+        if not row.empty:
+            ax.scatter([xx], [float(row["majority"].iloc[0])], marker="_", s=900, color=INK, zorder=4,
+                       label="always the plane's largest class" if xx == x[0] else None)
+    ax.set_xticks(x, [f"{p} GBs ({int(1 / CHANCE[p])} classes)" for p in planes], fontsize=8.5)
+    ax.set_ylim(0, 1.3)
+    ax.set_yticks(np.arange(0, 1.01, 0.2))
+    ax.set_ylabel("grain-class accuracy on this plane's GBs", fontsize=8.5, color=INK)
+    ax.set_title("grain class on each plane", fontsize=9, color=INK)
+    from matplotlib.lines import Line2D
+    proxies = {"chance (1 / possible classes)": Line2D([], [], marker="x", linestyle="none", color=MUTED,
+                                                       markersize=6, markeredgewidth=1.6),
+               "always the plane's largest class": Line2D([], [], marker="_", linestyle="none", color=INK,
+                                                          markersize=12, markeredgewidth=2)}
+    handles, names = ax.get_legend_handles_labels()
+    ax.legend([proxies.get(name, handle) for handle, name in zip(handles, names)], names, loc="upper right",
+              fontsize=7.5, frameon=False, ncol=2)
+    for ax in axes[0]:
+        ds._style(ax)
+        ax.grid(axis="y", color=GRID, linewidth=0.5)
+        ax.grid(axis="x", visible=False)
+    meta_path = Path(krr_dir) / "krr_summary.json"
+    meta = json.loads(meta_path.read_text()) if meta_path.is_file() else {}
+    thickness = meta.get("vector", {}).get("thickness", "")
+    _finish(plt, fig, path, "Stage 1.4 KRR: what does the GB vector predict, and how well on each plane?",
+            f"{int(pooled['n_families'].max()):,} GB families{f' at {thickness}x' if thickness else ''}, 5-fold nested "
+            f"cross-validation with {fold_rule(summary)}. A 100 or 110 GB can be one of 4 grain classes, a 111 GB one "
+            "of 8. Source: krr_summary.csv and krr_by_plane.csv.")
+
+
+def stage1(krr_dir, scan_dir, out):
+    """Stage 1.4 and the 8x r_cut scan at a glance."""
+    import pandas as pd
+    folder = out / "stage1"
+    scan_path = Path(scan_dir) / "rcut_scan_summary.csv"
+    if scan_path.is_file():
+        scan = pd.read_csv(scan_path)
+        scan = scan[(scan["thickness"].astype(str) == "8") & np.isclose(scan["interface_radius"].astype(float), 8.0)]
+        if scan.empty:
+            print(f"  skipped stage1/rcut_scan.png: no 8x rows with interface radius 8 A in {sc.relative_path(scan_path)}")
+        else:
+            rcut_scan_figure(scan.sort_values("r_cut"), folder / "rcut_scan.png")
+    else:
+        print(f"  skipped stage1/rcut_scan.png: {sc.relative_path(scan_path)} not found")
+    if (Path(krr_dir) / "krr_summary.csv").is_file():
+        krr_figure(krr_dir, folder / "krr_by_plane.png")
+    else:
+        print(f"  skipped stage1/krr_by_plane.png: {sc.relative_path(Path(krr_dir) / 'krr_summary.csv')} not found")
+
+
+# --------------------------------------------------------------------------- grain-class overview
+
+OVERVIEW_STYLE = {"standard SOAP": (BLUE, "o"), "standard SOAP, whole cell": (BLUE, "s"),
+                  "covariant SOAP": (AQUA, "o"), "covariant SOAP, whole cell": (AQUA, "s"), "ACE": (ORANGE, "o")}
+REPRESENTATION_DESCRIPTORS = {"A": "standard SOAP", "B": "standard SOAP, whole cell", "C": "covariant SOAP",
+                              "D": "covariant SOAP, whole cell"}
+
+
+def census_classes():
+    import pandas as pd
+    return pd.read_csv(mc.CENSUS)[["family", "structure_class"]]
+
+
+def accuracy_without_census_mates(predictions_path):
+    """(accuracy, n) of the pooled grain-class predictions on test families with no census copy in a
+    training fold, for the strictest grouping stored; None if not available."""
+    import pandas as pd
+    if not Path(predictions_path).is_file():
+        return None
+    p = headline_rows(pd.read_csv(predictions_path, dtype={"dataset": str}))
+    p = p[p["dataset"] == "all"].merge(census_classes(), on="family", how="left")
+    if p.empty or "grain_class_krr" not in p:
+        return None
+    p["structure_class"] = p["structure_class"].fillna(p["family"])
+    folds = p.groupby("structure_class")["fold"].agg(set)
+    alone = np.array([not (folds[c] - {f}) for c, f in zip(p["structure_class"], p["fold"])])
+    correct = (p["grain_class_true"] == p["grain_class_krr"]).to_numpy()
+    return float(correct[alone].mean()), int(alone.sum()), int((~alone).sum())
+
+
+def overview_rows(krr_dirs, representation_dir, benchmark_dirs):
+    """Every grain-class score of every descriptor, each with its baseline and source file."""
+    import pandas as pd
+    rows = []
+
+    def add(evaluation, scope, descriptor, accuracy, majority, n, source, grouping=""):
+        rows.append({"evaluation": evaluation, "scope": scope, "descriptor": descriptor,
+                     "accuracy": round(float(accuracy), 4), "majority": round(float(majority), 4),
+                     "chance": CHANCE.get(scope, 0.125), "n": int(n), "grouping": grouping,
+                     "source": sc.relative_path(source)})
+
+    for descriptor, folder in krr_dirs.items():
+        path = Path(folder) / "krr_summary.csv"
+        if not path.is_file():
+            continue
+        summary = headline_rows(pd.read_csv(path, dtype={"dataset": str}))
+        row = summary[(summary["dataset"] == "all") & (summary["label"] == "grain_class")]
+        if row.empty:
+            continue
+        row = row.iloc[0]
+        add("Stage 1.4 KRR, 5-fold", "all planes", descriptor, row["krr_accuracy"], row["baseline_majority"],
+            row["n_families"], path, row["grouping"])
+        add("Stage 1.4 kNN, 5-fold", "all planes", descriptor, row["knn_accuracy"], row["baseline_majority"],
+            row["n_families"], path, row["grouping"])
+        if row["grouping"] != "census":
+            alone = accuracy_without_census_mates(Path(folder) / "krr_predictions.csv")
+            if alone is not None and alone[2] > 0:
+                add("Stage 1.4 KRR, test GBs with no census copy in training", "all planes", descriptor, alone[0],
+                    row["baseline_majority"], alone[1], Path(folder) / "krr_predictions.csv", row["grouping"])
+        path = Path(folder) / "krr_by_plane.csv"
+        if path.is_file():
+            by_plane = headline_rows(pd.read_csv(path, dtype={"plane": str}))
+            by_plane = by_plane[(by_plane["label"] == "grain_class") & (by_plane["model"] == "krr")]
+            for plane in sc.PLANES:
+                for evaluation, trained in (("Stage 1.4 KRR, one model for all planes", "all planes"),
+                                            ("Stage 1.4 KRR, one model per plane", f"{plane} only")):
+                    part = by_plane[(by_plane["plane"] == plane) & (by_plane["trained_on"] == trained)]
+                    if not part.empty:
+                        add(evaluation, plane, descriptor, part["accuracy"].iloc[0], part["majority"].iloc[0],
+                            part["n"].iloc[0], path, part["grouping"].iloc[0])
+
+    path = Path(representation_dir) / "phase1" / "results.csv"
+    if path.is_file():
+        table = pd.read_csv(path, dtype={"subset": str, "representation": str})
+        knn = table[table["variable"] == "knn_grain_class"]
+        n_rows = json.loads((path.parent / "summary.json").read_text()).get("n_rows", 0) \
+            if (path.parent / "summary.json").is_file() else 0
+        for subset in ("pooled", *sc.PLANES):
+            base = knn[(knn["kind"] == "baseline") & (knn["subset"] == subset)]
+            for code, descriptor in REPRESENTATION_DESCRIPTORS.items():
+                part = knn[(knn["kind"] == "raw") & (knn["subset"] == subset) & (knn["representation"] == code)]
+                if not part.empty and not base.empty:
+                    add("Fifth study: kNN on the raw vectors, one row per interface", "all planes" if subset == "pooled"
+                        else subset, descriptor, part["value"].iloc[0], base["value"].iloc[0],
+                        n_rows if subset == "pooled" else 0, path)
+
+    for descriptor, folder in benchmark_dirs.items():
+        path = Path(folder) / "summary.csv"
+        if not path.is_file():
+            continue
+        summary = pd.read_csv(path)
+        meta = json.loads((Path(folder) / "summary.json").read_text())
+        for label, scope in (("grain_class", "all planes"), *[(f"grain_class@{p}", p) for p in sc.PLANES]):
+            part = summary[(summary["descriptor"] == "reference") & (summary["label"] == label)
+                           & (summary["strategy"] == "fps") & (summary["model"] == "krr") & (summary["n"] == 100)]
+            if part.empty:
+                continue
+            majority = (meta["majority_class_share"]["grain_class"] if scope == "all planes"
+                        else meta.get("grain_class_majority_per_plane", {}).get(scope, np.nan))
+            add("Selection benchmark: KRR from 100 FPS picks", scope, descriptor, part["accuracy_mean"].iloc[0], majority,
+                100, path)
+    return pd.DataFrame(rows)
+
+
+def grain_class_overview(out, krr_dirs, representation_dir, benchmark_dirs):
+    """grain_class_overview.png and .csv: every grain-class score of every descriptor in one place."""
+    table = overview_rows(krr_dirs, representation_dir, benchmark_dirs)
+    folder = out / "grain_class_overview"
+    if table.empty:
+        print("  skipped grain_class_overview: no inputs found")
+        return
+    folder.mkdir(parents=True, exist_ok=True)
+    csv_path = folder / "grain_class_overview.csv"
+    if ARCHIVE_ROOT is not None and csv_path.is_file():
+        keep_old(csv_path, ARCHIVE_ROOT)
+    table.to_csv(csv_path, index=False)
+    print(f"  {sc.relative_path(csv_path)}")
+    keys = list(dict.fromkeys(zip(table["evaluation"], table["scope"])))
+    y = np.arange(len(keys))[::-1]
+    position = dict(zip(keys, y))
+    plt, fig, axes = _figure(1, 1, 11, 0.36 * len(keys) + 2.6)
+    ax = axes[0, 0]
+    for key, yy in position.items():
+        part = table[(table["evaluation"] == key[0]) & (table["scope"] == key[1])]
+        ax.hlines(yy, 0, 1, color=GRID, linewidth=0.6, zorder=0)
+        ax.scatter([part["majority"].iloc[0]], [yy], marker="|", s=160, color=MUTED, linewidths=2, zorder=2)
+        ax.scatter([part["chance"].iloc[0]], [yy], marker="x", s=22, color=MUTED, linewidths=1, zorder=2)
+    for descriptor, (color, marker) in OVERVIEW_STYLE.items():
+        part = table[table["descriptor"] == descriptor]
+        if part.empty:
+            continue
+        ax.scatter(part["accuracy"], [position[(e, s)] for e, s in zip(part["evaluation"], part["scope"])], s=44,
+                   color=color, marker=marker, edgecolor="white", linewidth=0.5, zorder=3, label=descriptor)
+    previous = None
+    for key, yy in position.items():
+        if previous is not None and key[0] != previous:
+            ax.axhline(yy + 0.5, color=MUTED, linewidth=0.6)
+        previous = key[0]
+    ax.set_yticks(y, [f"{e}  |  {s}" for e, s in keys], fontsize=7.5)
+    ax.set_xlim(0, 1.02)  # room for whole markers at 1.0
+    ax.set_xticks(np.arange(0, 1.01, 0.2))
+    ax.set_xlabel("grain-class accuracy on held-out GBs", fontsize=8.5, color=INK)
+    ds._style(ax)
+    handles, labels = ax.get_legend_handles_labels()
+    handles += [plt.Line2D([], [], marker="|", linestyle="", color=MUTED, markersize=10, markeredgewidth=2),
+                plt.Line2D([], [], marker="x", linestyle="", color=MUTED, markersize=5)]
+    labels += ["always the largest class (that row)", "chance (1 / possible classes)"]
+    fig.legend(handles, labels, loc="lower center", ncol=4, fontsize=7.5, frameon=False)
+    groupings = {d: g for d, g in zip(table["descriptor"], table["grouping"]) if g}
+    _finish(plt, fig, folder / "grain_class_overview.png",
+            "How well does each descriptor predict grain class? Every score in one place",
+            "Rows differ in data, thickness and protocol, so compare descriptors within a row, not rows with each other. "
+            "Stage 1.4: 5-fold nested cross-validation on the GB families at 4x (D0985 dropped); folds keep "
+            + "; ".join(f"{d}: {'census copies (turned copies too)' if g == 'census' else 'coinciding vectors'}"
+                        for d, g in groupings.items())
+            + " together. Fifth study: kNN on the raw vectors at 8x, one row per interface (edge and mid), pairs from "
+            "one GB left out. Benchmark: KRR trained on 100 FPS picks, tested on held-out GBs at 8x. "
+            "Numbers and source files: grain_class_overview.csv.", rect_bottom=0.6 / (0.36 * len(keys) + 2.6))
 
 
 # --------------------------------------------------------------------------- representation response
@@ -1617,7 +2062,7 @@ def settings_grid_figures(grid_dir, out):
     variable = next((v for v, _ in PAIR_VARIABLES if (anchors["variable"] == v).any() and v.startswith("jaccard")), None)
     if variable:
         tags = list(dict.fromkeys(anchors.loc[anchors["variable"] == variable, "factor"]))
-        plt, fig, axes = _figure(1, len(methods), 3.4 * len(methods), 4.2, sharey=True)
+        plt, fig, axes = _figure(1, len(methods), 3.4 * len(methods), 4.5, sharey=True)
         for ax, method in zip(axes[0], methods):
             part = anchors[(anchors["method"] == method) & (anchors["variable"] == variable)]
             for rep in "ABCD":
@@ -1633,11 +2078,12 @@ def settings_grid_figures(grid_dir, out):
             ds._style(ax)
             ax.grid(axis="y", color=GRID, linewidth=0.5)
         axes[0, 0].set_ylabel(dict(PAIR_VARIABLES)[variable] + "\nfrom the reference setting", fontsize=8, color=INK)
-        axes[0, 0].legend(loc="upper left", fontsize=7, frameon=False)
+        handles, labels = axes[0, 0].get_legend_handles_labels()  # below the panels: inside, it hid points
+        fig.legend(handles, labels, loc="lower center", ncol=4, fontsize=7.5, frameon=False)
         _finish(plt, fig, folder / "anchor_distance.png",
                 "How far does each SOAP setting move the map away from the reference setting (r_cut 6, l_max 6, sigma 0.5)?",
                 "Mean change between the reference map and the replicate maps of each grid setting, per representation. "
-                "Dotted line: 95th percentile of the replicate-to-replicate change (noise floor).")
+                "Dotted line: 95th percentile of the replicate-to-replicate change (noise floor).", rect_bottom=0.35 / 4.5)
     means = table[table["kind"] == "grid_mean"]
     if not means.empty and variables:
         plt, fig, axes = _figure(1, len(variables), 3.0 * len(variables) + 1, 0.3 * len(methods) + 2.0, sharey=True)
@@ -1690,18 +2136,32 @@ def refusal(out_dir, prefix, inputs):
 
 
 def main():
-    global TITLE_PREFIX, ARCHIVE_ROOT
+    global TITLE_PREFIX, ARCHIVE_ROOT, DESCRIPTOR_TYPE, KIND
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-    parser.add_argument("--sensitivity-dir", type=Path, default=SENSITIVITY_DIR)
-    parser.add_argument("--benchmark-dir", type=Path, default=BENCHMARK_DIR)
+    parser.add_argument("--descriptor-type", choices=tuple(DEFAULT_DIRS), default="soap",
+                        help="soap (standard SOAP, default), covariant or ace: which outputs the type's sections read, "
+                             "and their default folders")
+    parser.add_argument("--sensitivity-dir", type=Path, default=None,
+                        help="default calculations/ML_dscribe/CoGe/<standard|covariant>/descriptor_sensitivity")
+    parser.add_argument("--benchmark-dir", type=Path, default=None,
+                        help="default .../<standard|covariant>/selection_benchmark")
+    parser.add_argument("--scan-dir", type=Path, default=None,
+                        help="rcut_scan_summary.py output for stage1/ (default .../<standard|covariant>/rcut_scan_8x)")
     parser.add_argument("--covariant-dir", type=Path, default=COVARIANT_DIR)
     parser.add_argument("--labels-file", type=Path, default=LABELS_FILE, help="geometry_labels.csv")
-    parser.add_argument("--krr-dir", type=Path, default=KRR_DIR,
-                        help="krr_classify.py output with krr_by_plane.csv and krr_regression.csv")
+    parser.add_argument("--krr-dir", type=Path, default=None,
+                        help="krr_classify.py output with krr_by_plane.csv and krr_regression.csv (default "
+                             f"{sc.relative_path(KRR_DIR)}; covariant: .../covariant/{TAG}/interface_r8_both_t4_no_boundary)")
     parser.add_argument("--representation-dir", type=Path, default=REPRESENTATION_DIR,
                         help="representation_study.py output (phase1/, phase2/, thickness/)")
     parser.add_argument("--grid-dir", type=Path, default=GRID_DIR, help="representation_study.py --study settings_grid output")
-    parser.add_argument("--out-dir", type=Path, default=OUT_DIR)
+    parser.add_argument("--out-dir", type=Path, default=None,
+                        help="the type's sections (default plots/CoGe/dim-reduction/SOAP/<standard|covariant> or .../ACE)")
+    parser.add_argument("--covariant-out-dir", type=Path, default=None,
+                        help=f"covariant-only sections ({', '.join(COVARIANT_SECTIONS)}); default --out-dir with "
+                             f"--descriptor-type covariant, else {sc.relative_path(COVARIANT_OUT_DIR)}")
+    parser.add_argument("--comparison-out-dir", type=Path, default=COMPARISON_OUT_DIR,
+                        help=f"sections that compare descriptor kinds ({', '.join(COMPARISON_SECTIONS)})")
     parser.add_argument("--archive-old", type=Path, default=None,
                         help="move each figure about to be redrawn to ARCHIVE_OLD/<its path in the project> first")
     parser.add_argument("--done-marker", type=Path, default=None, help="file written when every chosen section is drawn")
@@ -1712,29 +2172,58 @@ def main():
                              "and results/")
     parser.add_argument("--dry-run", action="store_true", help="list the sections and whether their inputs exist")
     args = parser.parse_args()
+    defaults = DEFAULT_DIRS[args.descriptor_type]
+    for name, key in (("sensitivity_dir", "sensitivity"), ("benchmark_dir", "benchmark"), ("krr_dir", "krr"),
+                      ("scan_dir", "scan"), ("out_dir", "out")):
+        if getattr(args, name) is None:
+            setattr(args, name, defaults[key])
+    if args.covariant_out_dir is None:
+        args.covariant_out_dir = args.out_dir if args.descriptor_type == "covariant" else COVARIANT_OUT_DIR
+    if args.descriptor_type in TYPE_SECTIONS:
+        unknown = [section for section in (args.only or [])
+                   if section not in TYPE_SECTIONS[args.descriptor_type] + COMPARISON_SECTIONS]
+        if unknown:
+            parser.error(f"--descriptor-type {args.descriptor_type} has no section {' '.join(unknown)}")
+    # Inputs of the overview: each type's KRR and benchmark, the chosen type's from the flags.
+    krr_dirs = {"standard SOAP": KRR_DIR, "covariant SOAP": DEFAULT_DIRS["covariant"]["krr"], "ACE": ACE_KRR_DIR}
+    benchmark_dirs = {"standard SOAP": BENCHMARK_V2_DIR, "covariant SOAP": DEFAULT_DIRS["covariant"]["benchmark"]}
+    if args.descriptor_type == "covariant":
+        krr_dirs["covariant SOAP"], benchmark_dirs["covariant SOAP"] = args.krr_dir, args.benchmark_dir
 
     needs = {"descriptor_settings": args.sensitivity_dir / "sensitivity.csv",
              "maps_by_setting": args.sensitivity_dir / "maps.npz",
              "seed_stability": args.sensitivity_dir / "maps.npz",
              "thickness": args.sensitivity_dir / "thickness_test.csv",
              "selection": args.benchmark_dir / "maps.npz",
-             "covariant": args.covariant_dir / "covariant_soap.npz",
-             "free_labels": args.labels_file,
+             "vector_sizes": args.covariant_dir / "covariant_soap.npz",
+             "free_labels": args.labels_file if args.descriptor_type == "soap" else args.krr_dir / "krr_regression.csv",
+             "stage1": args.krr_dir / "krr_summary.csv",
              "representation_response": args.representation_dir / "phase1" / "results.csv",
-             "settings_grid": args.grid_dir / "results.csv"}
-    chosen = args.only or SECTIONS
+             "settings_grid": args.grid_dir / "results.csv",
+             "grain_class_overview": KRR_DIR / "krr_summary.csv"}
+    chosen = args.only or (SECTIONS if args.descriptor_type == "soap" else TYPE_SECTIONS[args.descriptor_type])
     inputs = [needs[section].parent for section in chosen]
     if "selection" in chosen or "free_labels" in chosen:
         inputs.append(args.krr_dir)
-    refused = refusal(args.out_dir, args.title_prefix, inputs)
-    if refused:
-        print(f"refused: {refused}", file=sys.stderr)
-        return 2
+    if "stage1" in chosen:
+        inputs.append(args.scan_dir)
+    if "grain_class_overview" in chosen:
+        inputs += [*krr_dirs.values(), *benchmark_dirs.values(), args.representation_dir]
+    def target(section):
+        return (args.covariant_out_dir if section in COVARIANT_SECTIONS
+                else args.comparison_out_dir if section in COMPARISON_SECTIONS else args.out_dir)
+
+    for out_dir in dict.fromkeys(target(section) for section in chosen):
+        refused = refusal(out_dir, args.title_prefix, inputs)
+        if refused:
+            print(f"refused: {refused}", file=sys.stderr)
+            return 2
     if args.archive_old is not None and not _inside(args.archive_old, sc.PROJECT_ROOT / "archive"):
         print("refused: --archive-old must be a folder under archive/", file=sys.stderr)
         return 2
     TITLE_PREFIX = args.title_prefix.strip()
     ARCHIVE_ROOT = args.archive_old
+    DESCRIPTOR_TYPE = args.descriptor_type
     if args.dry_run:
         for section in chosen:
             print(f"{section:20s} {'ok' if needs[section].is_file() else 'MISSING'}  {sc.relative_path(needs[section])}")
@@ -1744,10 +2233,15 @@ def main():
             "seed_stability": lambda: seed_stability(args.sensitivity_dir, args.out_dir),
             "thickness": lambda: thickness(args.sensitivity_dir, args.out_dir),
             "selection": lambda: selection(args.benchmark_dir, args.out_dir, args.krr_dir),
-            "covariant": lambda: covariant(args.covariant_dir, args.out_dir),
-            "free_labels": lambda: free_labels(args.labels_file, args.krr_dir, args.out_dir),
-            "representation_response": lambda: representation_response(args.representation_dir, args.out_dir),
-            "settings_grid": lambda: settings_grid_figures(args.grid_dir, args.out_dir)}
+            "vector_sizes": lambda: covariant(args.covariant_dir, args.covariant_out_dir),
+            "free_labels": lambda: free_labels(args.labels_file, args.krr_dir, args.out_dir,
+                                               label_figures=args.descriptor_type == "soap"),
+            "stage1": lambda: stage1(args.krr_dir, args.scan_dir, args.out_dir),
+            "grain_class_overview": lambda: grain_class_overview(args.comparison_out_dir, krr_dirs,
+                                                                 args.representation_dir, benchmark_dirs),
+            "representation_response": lambda: representation_response(args.representation_dir,
+                                                                       args.comparison_out_dir),
+            "settings_grid": lambda: settings_grid_figures(args.grid_dir, args.comparison_out_dir)}
     skipped = []
     for section in chosen:
         if not needs[section].is_file():
@@ -1755,6 +2249,7 @@ def main():
             skipped.append(section)
             continue
         print(f"{section}:")
+        KIND = "" if section in COMPARISON_SECTIONS else KIND_TITLES[args.descriptor_type]
         draw[section]()
     if args.done_marker is not None:
         if skipped:

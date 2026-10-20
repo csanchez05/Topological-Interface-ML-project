@@ -16,7 +16,7 @@
 # 0.5 GB each; the main process holds about 4.4 GB of vectors per radius (float32).
 # Settings are read from the environment, so a second run is one line:
 #   N3=6 L3=4 sbatch src/ACE/CoGe/run_ace.slurm
-#   DENSITY=dirac sbatch src/ACE/CoGe/run_ace.slurm
+#   R_CUT=8 WEIGHTING=pow sbatch src/ACE/CoGe/run_ace.slurm
 #   NU_MAX=2 RADII="4 6 8 10" sbatch src/ACE/CoGe/run_ace.slurm
 # OVERWRITE=1 replaces an existing run with the same ACE settings.
 # The steps run in order; a failed check does not stop the later steps, but the job then exits 1.
@@ -27,7 +27,7 @@ source src/mlenv/env.sh
 
 ACE_ARGS=(--r-cut "${R_CUT:-6.0}" --n-max "${N_MAX:-8}" --l-max "${L_MAX:-6}" --sigma "${SIGMA:-0.5}"
           --smoothing "${SMOOTHING:-0.5}" --density "${DENSITY:-gaussian}" --nu-max "${NU_MAX:-3}"
-          --n3 "${N3:-4}" --l3 "${L3:-4}")
+          --n3 "${N3:-4}" --l3 "${L3:-4}" --weighting "${WEIGHTING:-none}")
 read -r -a RADII_LIST <<< "${RADII:-8}"
 OVERWRITE_FLAG=()
 if [[ "${OVERWRITE:-0}" == 1 ]]; then

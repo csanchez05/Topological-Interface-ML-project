@@ -22,7 +22,7 @@ Finished tasks are recognised by their output files and skipped, so a run that
 was cancelled or partly failed can simply be started again. A failed task does
 not stop the others; tasks that depend on it are skipped and listed at the end.
 
-Results: calculations/ML_dscribe/CoGe/rcut_scan_all/{by_thickness,pooled}/rc<r_cut>/<vector tag>/
+Results: calculations/ML_dscribe/CoGe/standard/rcut_scan_all/{by_thickness,pooled}/rc<r_cut>/<vector tag>/
 Then:    python -B src/ML_dscribe_scripts/rcut_scan_summary.py
 """
 import argparse

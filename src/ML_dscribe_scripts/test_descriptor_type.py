@@ -1,4 +1,4 @@
-"""Synthetic tests for --descriptor-type soap|ace in ml_common.py and select_gbs.py.
+"""Synthetic tests for --descriptor-type soap|covariant|ace in ml_common.py and select_gbs.py.
 
     python -B -m unittest discover -s src/ML_dscribe_scripts -p 'test_*.py'
 """
@@ -16,6 +16,10 @@ import ml_common as mc
 import select_gbs
 
 sc = mc.sc
+sys.path.insert(0, str(mc.COVARIANT_SCRIPTS))
+import test_covariant_common as tcc  # noqa: E402  (its synthetic covariant run)
+
+cc = mc.covariant_module()
 
 
 def parse(*argv):
@@ -50,7 +54,30 @@ class Arguments(unittest.TestCase):
         self.assertEqual((args.descriptor_type, args.descriptor), ("soap", "rc6.0_n8_l6_s0.5"))
         self.assertEqual(mc.output_dir(args), mc.OUTPUT_ROOT / "rc6.0_n8_l6_s0.5" / "interface_r8_both_t4")
         self.assertEqual(mc.vector_source(args), {"descriptor_type": "soap", "ace_blocks": None,
-                                                  "ace_scaling": "pristine"})
+                                                  "ace_scaling": "pristine", "covariant_blocks": None})
+
+    def test_layout_since_2026_10_13(self):
+        ml = mc.PROJECT_ROOT / "calculations" / "ML_dscribe" / "CoGe"
+        self.assertEqual(mc.OUTPUT_ROOT, ml / "standard")
+        self.assertEqual(mc.OUTPUT_ROOTS["covariant"], ml / "covariant")
+        self.assertEqual(mc.COMPARISON_ROOT, ml / "comparison")
+        self.assertEqual(mc.LABELS_DIR, ml / "labels")
+        self.assertEqual(mc.CENSUS, ml / "standard" / "rc6.0_n8_l6_s0.5" / "interface_r8_both_t4" / "distinct_gbs.csv")
+        soap = mc.PROJECT_ROOT / "plots" / "CoGe" / "dim-reduction" / "SOAP"
+        self.assertEqual((mc.plot_root("soap"), mc.plot_root("covariant"), mc.COMPARISON_PLOTS),
+                         (soap / "standard", soap / "covariant", soap / "comparison"))
+        self.assertEqual(list(mc.COVARIANT_BLOCKS), list(cc.BLOCKS))
+
+    def test_covariant_default_and_folders(self):
+        args = parse("--descriptor-type", "covariant", "--thickness", "8")
+        self.assertEqual(args.descriptor, "rc6.0_n8_l6_s0.5")
+        self.assertEqual(mc.output_dir(args), mc.OUTPUT_ROOTS["covariant"] / "rc6.0_n8_l6_s0.5" / "interface_r8_both_t8")
+        self.assertEqual(mc.vector_source(args)["covariant_blocks"], None)
+        blocks = parse("--descriptor-type", "covariant", "--covariant-blocks", "tensor", "polar")
+        self.assertEqual(blocks.covariant_blocks, ["polar", "tensor"])       # storage order
+        self.assertEqual(mc.output_dir(blocks).name, "interface_r8_both_t4_polar+tensor")
+        every = parse("--descriptor-type", "covariant", "--covariant-blocks", *mc.COVARIANT_BLOCKS)
+        self.assertEqual(mc.output_dir(every).name, "interface_r8_both_t4_all5")
 
     def test_ace_default_and_folders(self):
         args = parse("--descriptor-type", "ace")
@@ -70,6 +97,48 @@ class Arguments(unittest.TestCase):
             parse("--ace-scaling", "none")
         with self.assertRaises(ValueError):
             parse("--descriptor-type", "ace", "--kind", "nonbulk")
+        with self.assertRaises(ValueError):
+            parse("--covariant-blocks", "polar")
+        with self.assertRaises(ValueError):
+            parse("--descriptor-type", "ace", "--covariant-blocks", "polar")
+        with self.assertRaises(ValueError):
+            parse("--descriptor-type", "covariant", "--ace-blocks", "nu2")
+        with self.assertRaises(ValueError):
+            parse("--descriptor-type", "covariant", "--kind", "nonbulk")
+
+
+class CovariantLoading(unittest.TestCase):
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.folder, self.interface, self.glob, self.bulk = tcc.write_run(Path(self.tmp.name) / "covariant")
+
+    def tearDown(self):
+        self.tmp.cleanup()
+
+    def test_vectors_join_edge_and_mid(self):
+        X, index = mc.load_all_vectors(self.folder, descriptor_type="covariant")
+        edge = np.concatenate([self.interface[k][:, 0].reshape(3, -1) for k in cc.DEFAULT_BLOCKS], axis=1)
+        mid = np.concatenate([self.interface[k][:, 1].reshape(3, -1) for k in cc.DEFAULT_BLOCKS], axis=1)
+        np.testing.assert_array_equal(X, np.concatenate([edge, mid], axis=1))
+        self.assertEqual(X.dtype, np.float32)
+        self.assertEqual(len(index), 3)
+        polar, _ = mc.load_all_vectors(self.folder, kind="global", descriptor_type="covariant",
+                                       covariant_blocks=["polar"])
+        np.testing.assert_array_equal(polar, self.glob["polar"].reshape(3, -1))
+        with self.assertRaises(ValueError):
+            mc.load_all_vectors(self.folder, kind="nonbulk", descriptor_type="covariant")
+
+    def test_settings_record_blocks_and_join(self):
+        args = parse("--descriptor-type", "covariant", "--descriptor", str(self.folder))
+        settings = mc.vector_settings(args)
+        self.assertEqual((settings["descriptor_type"], settings["descriptor"]), ("covariant", "tag"))
+        self.assertEqual(settings["covariant_blocks"], list(cc.DEFAULT_BLOCKS))
+        self.assertEqual(settings["planes_joined"], "[edge | mid], not averaged")
+        self.assertNotIn("covariant_blocks", mc.vector_settings(parse()))
+
+    def test_a_covariant_run_read_as_soap_gets_a_hint(self):
+        with self.assertRaisesRegex(FileNotFoundError, "--descriptor-type covariant"):
+            mc.load_all_vectors(self.folder, descriptor_type="soap")
 
 
 class Loading(unittest.TestCase):
@@ -111,8 +180,9 @@ class Loading(unittest.TestCase):
 
 class SelectionFolders(unittest.TestCase):
     def folders(self, descriptor_type="soap", tag="rc6.0_n8_l6_s0.5", blocks=None, scaling="pristine",
-                planes=("100", "110", "111"), min_pair=None, n_select=30):
-        return select_gbs.default_folders(descriptor_type, tag, blocks, scaling, list(planes), min_pair, n_select)
+                planes=("100", "110", "111"), min_pair=None, n_select=30, covariant_blocks=None):
+        return select_gbs.default_folders(descriptor_type, tag, blocks, scaling, list(planes), min_pair, n_select,
+                                          covariant_blocks)
 
     def test_soap_folders_are_unchanged(self):
         self.assertEqual(self.folders(), (select_gbs.PLOT_DIR, select_gbs.OUT_DIR))
@@ -129,6 +199,14 @@ class SelectionFolders(unittest.TestCase):
         self.assertEqual(plot, mc.plot_root("ace") / "nu3_odd_noscale_plane100_dmin1.8")
         plot, _ = self.folders("ace", "rc6.0_n8_l6_dirac_nu3-n4-l4")
         self.assertEqual(plot.name, "rc6.0_n8_l6_dirac_nu3-n4-l4")
+
+    def test_covariant_folders(self):
+        self.assertEqual(self.folders("covariant"),
+                         (mc.plot_root("covariant"), mc.OUTPUT_ROOTS["covariant"] / "dim-reduction"))
+        plot, out = self.folders("covariant", planes=["100"], min_pair=1.8, covariant_blocks=list(mc.COVARIANT_BLOCKS))
+        self.assertEqual((plot.name, out.name), ("all5_plane100_dmin1.8", "all5_plane100_dmin1.8"))
+        plot, _ = self.folders("covariant", "rc8.0_n8_l4_s0.3_t8")
+        self.assertEqual(plot, mc.plot_root("covariant") / "rc8.0_n8_l4_s0.3_t8")
 
 
 if __name__ == "__main__":

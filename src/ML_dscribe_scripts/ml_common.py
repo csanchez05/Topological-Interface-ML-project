@@ -2,8 +2,14 @@
 
 Loads one vector per grain-boundary family, measures relative distances between
 vectors, groups vectors that coincide, and writes tables atomically. The vectors
-are SOAP (soap_common.load_gb, the default) or ACE (ace_common.load_gb_vectors,
-with --descriptor-type ace); ACE results go to calculations/ML_ACE/CoGe/.
+are standard SOAP (soap_common.load_gb, the default), covariant SOAP
+(covariant_common.load_gb_vectors, with --descriptor-type covariant) or ACE
+(ace_common.load_gb_vectors, with --descriptor-type ace).
+
+Outputs (since 2026-10-13): calculations/ML_dscribe/CoGe/standard/ (standard SOAP),
+.../covariant/ (covariant SOAP), .../comparison/ (studies that compare descriptor kinds),
+.../labels/ (descriptor-free labels, shared); ACE results go to calculations/ML_ACE/CoGe/.
+Figures: plots/CoGe/dim-reduction/SOAP/{standard,covariant,comparison}/ and .../ACE/.
 """
 from __future__ import annotations
 
@@ -26,18 +32,28 @@ if str(SOAP_SCRIPTS) not in sys.path:
 import soap_common as sc  # noqa: E402
 
 ACE_SCRIPTS = PROJECT_ROOT / "src" / "ACE" / "CoGe"
-OUTPUT_ROOT = PROJECT_ROOT / "calculations" / "ML_dscribe" / "CoGe"
-DESCRIPTOR_TYPES = ("soap", "ace")
-# Analyses of each descriptor type go to their own tree; labels and the census stay in OUTPUT_ROOT.
-OUTPUT_ROOTS = {"soap": OUTPUT_ROOT, "ace": PROJECT_ROOT / "calculations" / "ML_ACE" / "CoGe"}
-LABELS_DIR = OUTPUT_ROOT / "labels"
+COVARIANT_SCRIPTS = SOAP_SCRIPTS / "covariant"
+ML_ROOT = PROJECT_ROOT / "calculations" / "ML_dscribe" / "CoGe"
+# Standard-SOAP analyses (and the Stage 1.5 census); before 2026-10-13 they sat directly in ML_ROOT.
+OUTPUT_ROOT = ML_ROOT / "standard"
+# Studies that compare descriptor kinds (representation_study, settings_grid, ...).
+COMPARISON_ROOT = ML_ROOT / "comparison"
+# soap = standard SOAP (the name predates covariant SOAP and stays for the command line).
+DESCRIPTOR_TYPES = ("soap", "covariant", "ace")
+# Analyses of each descriptor type go to their own tree; labels stay in ML_ROOT, the census in OUTPUT_ROOT.
+OUTPUT_ROOTS = {"soap": OUTPUT_ROOT, "covariant": ML_ROOT / "covariant",
+                "ace": PROJECT_ROOT / "calculations" / "ML_ACE" / "CoGe"}
+LABELS_DIR = ML_ROOT / "labels"
 # Stage 2 maps and the descriptor-study figures, one folder per descriptor type (since 2026-10-13).
 DIMRED_PLOTS = PROJECT_ROOT / "plots" / "CoGe" / "dim-reduction"
-PLOT_FOLDERS = {"soap": "SOAP", "ace": "ACE"}
+PLOT_FOLDERS = {"soap": "SOAP/standard", "covariant": "SOAP/covariant", "ace": "ACE"}
+COMPARISON_PLOTS = DIMRED_PLOTS / "SOAP" / "comparison"
 DEFAULT_DESCRIPTOR = "rc6.0_n8_l6_s0.5"
-DEFAULT_DESCRIPTORS = {"soap": DEFAULT_DESCRIPTOR, "ace": "rc6.0_n8_l6_s0.5_nu3-n4-l4"}
+DEFAULT_DESCRIPTORS = {"soap": DEFAULT_DESCRIPTOR, "covariant": DEFAULT_DESCRIPTOR, "ace": "rc6.0_n8_l6_s0.5_nu3-n4-l4"}
 ACE_BLOCKS = ("nu1", "nu2", "nu3_even", "nu3_odd")
 ACE_SCALINGS = ("pristine", "none")
+# storage order of covariant_common.BLOCKS; the default vector uses the four with lambda >= 1
+COVARIANT_BLOCKS = ("invariant", "polar", "axial", "tensor", "pseudotensor")
 DEFAULT_TOL = 1e-4
 # Stage 1 census: which families hold the same structure (structure_class), from step 1.5.
 CENSUS = OUTPUT_ROOT / DEFAULT_DESCRIPTOR / "interface_r8_both_t4" / "distinct_gbs.csv"
@@ -56,11 +72,14 @@ def add_vector_arguments(parser):
     """The vector options; call resolve_vector_arguments(args) after parsing."""
     group = parser.add_argument_group("which vector")
     group.add_argument("--descriptor-type", default="soap", choices=DESCRIPTOR_TYPES,
-                       help="soap: DScribe SOAP (calculations/descriptors/dscribe); ace: featomic ACE "
-                            "(calculations/descriptors/ACE), results in calculations/ML_ACE/CoGe (default soap)")
+                       help="soap: standard DScribe SOAP (calculations/descriptors/dscribe/standard), results in "
+                            "calculations/ML_dscribe/CoGe/standard; covariant: covariant SOAP "
+                            "(calculations/descriptors/dscribe/covariant), results in .../CoGe/covariant; ace: "
+                            "featomic ACE (calculations/descriptors/ACE), results in calculations/ML_ACE/CoGe "
+                            "(default soap)")
     group.add_argument("--descriptor", default=None,
-                       help="descriptor run: a tag under the type's standard/ folder or a run folder of either "
-                            f"region (default {DEFAULT_DESCRIPTORS['soap']} for soap, "
+                       help="descriptor run: a tag under the type's descriptor folder or a run folder of either "
+                            f"region (default {DEFAULT_DESCRIPTORS['soap']} for soap and covariant, "
                             f"{DEFAULT_DESCRIPTORS['ace']} for ace)")
     group.add_argument("--kind", default="interface", choices=KINDS,
                        help="interface: atoms within --radius of a plane; nonbulk: atoms whose SOAP differs "
@@ -68,7 +87,8 @@ def add_vector_arguments(parser):
     group.add_argument("--radius", type=float, default=8.0,
                        help="interface radius in A, one of the stored radii (default 8)")
     group.add_argument("--planes", default="both", choices=PLANE_CHOICES,
-                       help="both: mean of the two interfaces in the cell; edge or mid: one of them (default both)")
+                       help="both: mean of the two interfaces in the cell (covariant: the two interface vectors "
+                            "joined, [edge | mid], never averaged); edge or mid: one of them (default both)")
     group.add_argument("--thickness", type=thickness_argument, default=4,
                        help="the one thickness used for every GB (default 4, the smallest), or 'all' "
                             "to pool every thickness (krr_classify.py and pooled_duplicates.py only)")
@@ -77,9 +97,13 @@ def add_vector_arguments(parser):
     group.add_argument("--ace-scaling", default="pristine", choices=ACE_SCALINGS,
                        help="ACE only: pristine divides each block by its pristine-bulk length before joining; "
                             "none joins the raw blocks (default pristine)")
+    group.add_argument("--covariant-blocks", nargs="+", default=None, choices=COVARIANT_BLOCKS,
+                       help="covariant only: blocks joined into the vector, unscaled (default the lambda >= 1 "
+                            "blocks polar axial tensor pseudotensor; add invariant for the lambda = 0 block)")
     group.add_argument("--out-dir", type=Path, default=None,
-                       help="default: calculations/ML_dscribe/CoGe/<descriptor tag>/<vector tag>/ "
-                            "(calculations/ML_ACE/CoGe/... for ace)")
+                       help="default: <type root>/<descriptor tag>/<vector tag>/, type root "
+                            "calculations/ML_dscribe/CoGe/standard (soap), .../covariant (covariant) or "
+                            "calculations/ML_ACE/CoGe (ace)")
 
 
 def resolve_vector_arguments(args, parser=None):
@@ -91,18 +115,24 @@ def resolve_vector_arguments(args, parser=None):
 
     if args.descriptor is None:
         args.descriptor = DEFAULT_DESCRIPTORS[args.descriptor_type]
-    if args.descriptor_type == "soap" and (args.ace_blocks is not None or args.ace_scaling != "pristine"):
+    covariant_blocks = getattr(args, "covariant_blocks", None)
+    if args.descriptor_type != "ace" and (args.ace_blocks is not None or args.ace_scaling != "pristine"):
         error("--ace-blocks and --ace-scaling need --descriptor-type ace")
-    if args.descriptor_type == "ace" and args.kind == "nonbulk":
-        error("ACE runs store no nonbulk vectors; use --kind interface or global")
+    if args.descriptor_type != "covariant" and covariant_blocks is not None:
+        error("--covariant-blocks needs --descriptor-type covariant")
+    if args.descriptor_type in ("ace", "covariant") and args.kind == "nonbulk":
+        error(f"{args.descriptor_type} runs store no nonbulk vectors; use --kind interface or global")
     if args.ace_blocks is not None:
         args.ace_blocks = [name for name in ACE_BLOCKS if name in args.ace_blocks]
+    if covariant_blocks is not None:
+        args.covariant_blocks = [name for name in COVARIANT_BLOCKS if name in covariant_blocks]
     return args
 
 
 def vector_source(args):
-    """The keyword arguments that pass the descriptor type and ACE options to the loaders."""
-    return {"descriptor_type": args.descriptor_type, "ace_blocks": args.ace_blocks, "ace_scaling": args.ace_scaling}
+    """The keyword arguments that pass the descriptor type and its options to the loaders."""
+    return {"descriptor_type": args.descriptor_type, "ace_blocks": args.ace_blocks, "ace_scaling": args.ace_scaling,
+            "covariant_blocks": getattr(args, "covariant_blocks", None)}
 
 
 def ace_module():
@@ -114,8 +144,17 @@ def ace_module():
     return ace_common
 
 
+def covariant_module():
+    """covariant_common (the loaders, without covariant_descriptor.py's thread pinning), imported on first use."""
+    if str(COVARIANT_SCRIPTS) not in sys.path:
+        sys.path.insert(0, str(COVARIANT_SCRIPTS))
+    import covariant_common
+
+    return covariant_common
+
+
 def plot_root(descriptor_type="soap"):
-    """plots/CoGe/dim-reduction/SOAP or .../ACE."""
+    """plots/CoGe/dim-reduction/SOAP/standard, .../SOAP/covariant or .../ACE."""
     return DIMRED_PLOTS / PLOT_FOLDERS[descriptor_type]
 
 
@@ -128,6 +167,8 @@ def run_dir(region, descriptor, descriptor_type="soap"):
     """Folder of a descriptor run in one region; tags are looked up in the type's standard/ tree."""
     if descriptor_type == "ace":
         return ace_module().run_dir(region, descriptor)
+    if descriptor_type == "covariant":
+        return covariant_module().run_dir(region, descriptor)
     return sc.run_dir(region, descriptor)
 
 
@@ -169,6 +210,8 @@ def output_dir(args):
     tag = vector_tag(args.kind, args.radius, args.planes, args.thickness)
     if descriptor_type == "ace":
         tag += ace_suffix(args.ace_blocks, args.ace_scaling)
+    if descriptor_type == "covariant":
+        tag += covariant_module().blocks_suffix(getattr(args, "covariant_blocks", None))
     return OUTPUT_ROOTS[descriptor_type] / descriptor_tag(args.descriptor, descriptor_type) / tag
 
 
@@ -182,6 +225,11 @@ def vector_settings(args):
     if descriptor_type == "ace":
         settings["ace_blocks"] = args.ace_blocks or "all stored"
         settings["ace_scaling"] = args.ace_scaling
+    if descriptor_type == "covariant":
+        cc = covariant_module()
+        settings["covariant_blocks"] = list(getattr(args, "covariant_blocks", None) or cc.DEFAULT_BLOCKS)
+        if args.kind == "interface" and args.planes == "both":
+            settings["planes_joined"] = "[edge | mid], not averaged"
     return settings
 
 
@@ -189,33 +237,40 @@ def vector_settings(args):
 
 def _vector_file(folder, kind, descriptor_type):
     """The run's array file; a clear error when it is missing or belongs to the other descriptor type."""
-    files = {"soap": (sc.GLOBAL_FILE, sc.INTERFACE_FILE), "ace": ("global_ace.npz", "interface_ace.npz")}
+    files = {"soap": (sc.GLOBAL_FILE, sc.INTERFACE_FILE), "ace": ("global_ace.npz", "interface_ace.npz"),
+             "covariant": ("covariant_soap.npz", "covariant_soap.npz")}
     name = files[descriptor_type][0 if kind == "global" else 1]
     if not (folder / name).is_file():
-        other = "ace" if descriptor_type == "soap" else "soap"
-        hint = (f"; it holds {other.upper()} vectors, so pass --descriptor-type {other}"
-                if (folder / files[other][0 if kind == "global" else 1]).is_file()
-                else "; run gb_descriptor.py first or pass --descriptor")
+        others = [other for other in files if other != descriptor_type
+                  and (folder / files[other][0 if kind == "global" else 1]).is_file()]
+        hint = (f"; it holds {others[0]} vectors, so pass --descriptor-type {others[0]}" if others
+                else "; run the descriptor script first or pass --descriptor")
         raise FileNotFoundError(f"no {name} in {folder}{hint}")
     return folder / name
 
 
 def load_all_vectors(descriptor=None, kind="interface", radius=8.0, planes="both", descriptor_type="soap",
-                     ace_blocks=None, ace_scaling="pristine"):
+                     ace_blocks=None, ace_scaling="pristine", covariant_blocks=None):
     """Every structure of the run: (X float32, as stored for SOAP; index DataFrame).
 
     ACE vectors are the chosen blocks joined (ace_common.load_gb_vectors), by default each
-    divided by its pristine-bulk length.
+    divided by its pristine-bulk length. Covariant vectors are the chosen blocks joined unscaled
+    (covariant_common.load_gb_vectors); with planes "both" the two interface vectors are joined,
+    [edge | mid], not averaged.
     """
     descriptor = descriptor or DEFAULT_DESCRIPTORS[descriptor_type]
     folder = run_dir(region_of(kind), descriptor, descriptor_type)
     _vector_file(folder, kind, descriptor_type)
+    if descriptor_type in ("ace", "covariant") and kind == "nonbulk":
+        raise ValueError(f"{descriptor_type} runs store no nonbulk vectors")
     if descriptor_type == "ace":
-        if kind == "nonbulk":
-            raise ValueError("ACE runs store no nonbulk vectors")
         X, index = ace_module().load_gb_vectors(folder, kind, radius if kind == "interface" else None, planes,
                                                 ace_blocks, ace_scaling)
         return X.astype(np.float32), index.reset_index(drop=True)
+    if descriptor_type == "covariant":
+        X, index = covariant_module().load_gb_vectors(folder, kind, radius if kind == "interface" else None, planes,
+                                                      covariant_blocks)
+        return X, index.reset_index(drop=True)
     X, index = sc.load_gb(folder, kind=kind, radius=radius if kind == "interface" else None, planes=planes)
     return X, index.reset_index(drop=True)
 
@@ -283,20 +338,23 @@ def thickness_noise(X, index, thickness, kind="interface", radius=8.0):
 
 
 def load_distinct(descriptor=None, kind="interface", radius=8.0, planes="both", thickness=8,
-                  allow_undefined=False, descriptor_type="soap", ace_blocks=None, ace_scaling="pristine"):
+                  allow_undefined=False, descriptor_type="soap", ace_blocks=None, ace_scaling="pristine",
+                  covariant_blocks=None):
     """One vector per distinct GB (1,112): the alphabetically first family of each structure class.
 
     Returns (X float64, table, bulk). Rows are in family order, as in select_gbs.py.
     table has family, plane, sym, structure_class, grain_class, handedness and source;
     bulk is the pristine vector of the same descriptor setting (for ACE: the same blocks and
-    scaling). An undefined vector (a nonbulk vector with no nonbulk atoms) is an error, or with
-    allow_undefined a row of NaN. The census of distinct GBs comes from the structure-checked SOAP
-    run and holds for both descriptor types.
+    scaling; for covariant SOAP: the pristine whole-cell mean of the same blocks, laid out like the
+    GB vectors, which is close to zero for lambda >= 1). An undefined vector (a nonbulk vector with
+    no nonbulk atoms) is an error, or with allow_undefined a row of NaN. The census of distinct GBs
+    comes from the structure-checked SOAP run and holds for every descriptor type.
     """
     import pandas as pd
 
     descriptor = descriptor or DEFAULT_DESCRIPTORS[descriptor_type]
-    X_all, index_all = load_all_vectors(descriptor, kind, radius, planes, descriptor_type, ace_blocks, ace_scaling)
+    X_all, index_all = load_all_vectors(descriptor, kind, radius, planes, descriptor_type, ace_blocks, ace_scaling,
+                                        covariant_blocks)
     X, index, notes = select_thickness(X_all, index_all, thickness, kind, radius)
     undefined = notes.get("families_with_undefined_vector", [])
     if notes.get("families_without_this_thickness") or (undefined and not allow_undefined):
@@ -315,6 +373,9 @@ def load_distinct(descriptor=None, kind="interface", radius=8.0, planes="both", 
     if descriptor_type == "ace":
         X_bulk, bulk_index = ace_module().load_bulk_vectors(run_dir("global", descriptor, "ace"), ace_blocks,
                                                             ace_scaling)
+    elif descriptor_type == "covariant":
+        X_bulk, bulk_index = covariant_module().load_bulk_vectors(run_dir("global", descriptor, "covariant"),
+                                                                  covariant_blocks, kind, planes)
     else:
         X_bulk, bulk_index = sc.load_bulk(sc.run_dir("global", descriptor))
     bulk = X_bulk[(bulk_index["kind"] == "pristine").to_numpy()][0].astype(np.float64)

@@ -27,6 +27,7 @@ for _name in ("OMP_NUM_THREADS", "OPENBLAS_NUM_THREADS", "MKL_NUM_THREADS", "RAY
 import argparse
 import multiprocessing
 import sys
+import tempfile
 import time
 from pathlib import Path
 
@@ -103,10 +104,15 @@ def describe_structure(path, calculator, radii):
             "interface": interface, "n_interface": n_interface, "meta": meta}
 
 
-def _init_worker(settings, chunk, radii, properties, property_names):
+def _init_worker(settings, chunk, radii, labels_path):
     calculator = ac.Calculator(settings, chunk)
-    # Every worker checks its property labels against the ones the main process found.
-    calculator.properties, calculator.property_names = properties, property_names
+    # Every worker checks its property labels against the ones the main process found. They come
+    # through a file: passed directly they overfill the start-up pipe, and the main process then
+    # starts the workers one at a time (about 8 s each on qcg0, 13 min for 96 in job 12969).
+    with np.load(labels_path) as data:
+        for block in calculator.blocks:
+            calculator.properties[block] = data[f"properties_{block}"]
+            calculator.property_names[block] = [str(name) for name in data[f"property_names_{block}"]]
     _STATE.update(calculator=calculator, radii=radii)
 
 
@@ -216,19 +222,22 @@ def main():
         if done % 500 == 0 or done == n:
             print(f"  {done}/{n} structures, {time.time() - gb_start:.0f} s", flush=True)
 
-    init = (settings, args.chunk, radii, calculator.properties, calculator.property_names)
-    if args.workers > 1:
-        # featomic has already run in this process, and forking after that can hang the workers.
-        context = multiprocessing.get_context("spawn")
-        with context.Pool(args.workers, initializer=_init_worker, initargs=init) as pool:
-            for done, outcome in enumerate(pool.imap_unordered(_work, tasks, chunksize=2), 1):
-                store(*outcome)
+    with tempfile.TemporaryDirectory(prefix="ace_labels_") as scratch:
+        labels_path = Path(scratch) / "labels.npz"
+        np.savez(labels_path, **ac.label_arrays(calculator.properties, calculator.property_names))
+        init = (settings, args.chunk, radii, str(labels_path))
+        if args.workers > 1:
+            # featomic has already run in this process, and forking after that can hang the workers.
+            context = multiprocessing.get_context("spawn")
+            with context.Pool(args.workers, initializer=_init_worker, initargs=init) as pool:
+                for done, outcome in enumerate(pool.imap_unordered(_work, tasks, chunksize=2), 1):
+                    store(*outcome)
+                    report(done)
+        else:
+            _init_worker(*init)
+            for done, task in enumerate(tasks, 1):
+                store(*_work(task))
                 report(done)
-    else:
-        _init_worker(*init)
-        for done, task in enumerate(tasks, 1):
-            store(*_work(task))
-            report(done)
 
     keep = np.array([m is not None for m in meta])
     rows = []

@@ -44,7 +44,12 @@ EXPORT_ALWAYS = ("OUTCAR", "OSZICAR", "EIGENVAL", "IBZKPT", "DOSCAR", "vasprun.x
 MIN_FREE_GIB = 10
 SAMPLE_SECONDS = 30
 NUM = r"([-+]?[0-9.]+(?:[EeDd][-+]?\d+)?)"
-MIXING = ("AMIX", "AMIX_MAG", "AMIN")  # OUTCAR "AMIX     =   0.40;   BMIX ...", "AMIN     =   0.10"
+# OUTCAR "     AMIX     =   0.20;   BMIX     =  1.00", "     AMIX_MAG =   0.80;   BMIX_MAG =  0.00",
+# "     AMIN     =   0.01": two decimals, so BMIX_MAG 0.0001 prints as 0.00. The ';' keeps BMIX off the
+# INCAR echo at the top and off the "initial mixing ... BMIX =" line.
+MIXING = {"AMIX": r"^\s*AMIX\s*=\s*", "AMIX_MAG": r"^\s*AMIX_MAG\s*=\s*", "AMIN": r"^\s*AMIN\s*=\s*",
+          "BMIX": r";\s*BMIX\s*=\s*", "BMIX_MAG": r";\s*BMIX_MAG\s*=\s*"}
+MIXING_PRINTED = 0.005  # half the last printed digit
 
 
 class TaskError(Exception):
@@ -260,10 +265,10 @@ def validate(scratch, prepared, exit_code):
     smear, sigma = last(r"^\s*ISMEAR\s*=\s*(-?\d+);\s*SIGMA\s*=\s*" + NUM, out)
     require(int(smear) == int(incar["ISMEAR"]) and abs(number(sigma) - float(incar["SIGMA"])) < 1e-9,
             "ISMEAR/SIGMA")
-    mixing = {key: number(last(r"^\s*" + key + r"\s*=\s*" + NUM, out)) for key in MIXING}
+    mixing = {key: number(last(pattern + NUM, out)) for key, pattern in MIXING.items()}
     for key in MIXING:
         if key in incar:
-            require(abs(mixing[key] - float(incar[key])) < 1e-9,
+            require(abs(mixing[key] - float(incar[key])) < MIXING_PRINTED,
                     f"OUTCAR {key} {mixing[key]} != INCAR {incar[key]}")
     flags = {"LSORBIT": incar.get("LSORBIT", ".FALSE."), "LREAL": incar.get("LREAL", ".FALSE."),
              "LWAVE": incar.get("LWAVE", ".TRUE."), "LCHARG": incar.get("LCHARG", ".TRUE.")}

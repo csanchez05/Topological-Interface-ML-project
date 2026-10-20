@@ -19,6 +19,7 @@ import krr_classify
 import ml_common as mc
 import pooled_duplicates
 import rcut_scan_all
+import rcut_scan_summary
 import structure_match as sm
 
 INFORMATION = """Information for Test
@@ -523,6 +524,28 @@ class ScanDriver(unittest.TestCase):
                                       Path(folder) / "status.json")
             self.assertEqual([task.state for task in tasks], ["failed", "skipped", "ok"])
             self.assertFalse((Path(folder) / "b.done").exists())
+
+
+
+class CensusGrouping(unittest.TestCase):
+    def test_census_keeps_turned_copies_together(self):
+        import pandas as pd
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "distinct_gbs.csv"
+            pd.DataFrame({"family": ["a", "b", "c", "d", "e"],
+                          "structure_class": ["S0", "S0", "S1", "S2", "S3"]}).to_csv(path, index=False)
+            # a, b: one structure, different vectors (turned copies); c, d: coinciding vectors; f: not in the census
+            groups = krr_classify.census_groups(np.array(["a", "b", "c", "d", "e", "f"]), np.array([0, 1, 2, 2, 3, 4]),
+                                                path)
+        self.assertEqual(groups.tolist(), [0, 0, 1, 1, 2, 3])
+
+
+class ScanSummaryTable(unittest.TestCase):
+    def test_missing_values_print_as_a_dash(self):
+        # covariant SOAP: no coinciding pair, so largest_coinciding_distance is None
+        self.assertEqual(rcut_scan_summary.cell(None, 6, ".2e"), "     -")
+        self.assertEqual(rcut_scan_summary.cell("", 4, ".3f"), "   -")
+        self.assertEqual(rcut_scan_summary.cell(1.0e-3, 9, ".2e"), " 1.00e-03")
 
 
 if __name__ == "__main__":

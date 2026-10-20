@@ -8,7 +8,7 @@ Tasks, started as CPUs and memory allow (a task waits for the tasks it needs):
                      8 A and r_cut + 2), check_gb.py. Settings already stored are skipped.
   sensitivity        descriptor_sensitivity.py (part C), once every descriptor task is done
   benchmark          selection_benchmark.py (part D), once every descriptor task is done
-  plots              plot_descriptor_study.py: the figures in plots/CoGe/dim-reduction/SOAP/, once
+  plots              plot_descriptor_study.py: the figures in plots/CoGe/dim-reduction/SOAP/standard/, once
                      both analyses and the covariant run are done
 
 Finished tasks are recognised by their output files and skipped, so the job can simply be
@@ -30,11 +30,35 @@ Smoke test (a few structures into a scratch folder, no analyses):
             grid <tag>     the 12 standard SOAP settings of the sixth study (existing ones are skipped)
             covariant grid <tag>  lambda >= 1 covariant SOAP at 8x for each setting, named <tag>_t8
             phase1         representation_study.py --phase 1 (bulk test, PCA and UMAP)
-            plots          plot_descriptor_study.py: selection/, free_labels/, representation_response/
+            plots          plot_descriptor_study.py: selection/, free_labels/ (SOAP/standard/),
+                           representation_response/ (SOAP/comparison/)
   --part B  phase2, thickness, settings_grid (representation_study.py) and their figures.
   The reference covariant run is <tag>_lam2 while that folder exists, else <tag> (after the rename).
   --limit N passes to every descriptor run and to geometry_labels.py, and makes the studies use only
   those N sym folders per plane; krr and benchmark need the full catalogue and are left out.
+
+--study covariant: the standard-SOAP analyses repeated on covariant SOAP ([C_edge | C_mid] of the
+lambda >= 1 blocks), outputs in calculations/ML_dscribe/CoGe/covariant/ and figures in
+plots/CoGe/dim-reduction/SOAP/covariant/ (one job).
+  covariant reference      the reference run (all 13,868 structures, every block); only checked if present
+  covariant <knob> <value> one per setting of descriptor_sensitivity.covariant_runs(): lambda >= 1 at 8x,
+                           named <tag>_t8; check_covariant.py must pass. Runs already stored are only checked.
+  duplicates               find_duplicates.py --structure-census --single-interfaces (Stage 1.5) into
+                           covariant/<tag>/interface_r8_both_t4/
+  krr                      krr_classify.py --regression --census-grouping (Stage 1.4, D0985 dropped) into
+                           covariant/<tag>/interface_r8_both_t4_no_boundary/ (as for standard SOAP);
+                           "census" folds keep turned copies of one GB together
+  select, select plane100  select_gbs.py (Stage 2 lists), and with --planes 100 --min-pair 1.8
+  scan rc<r>               the 8x r_cut scan (r_cut 4 5 6 8 10 12, interface radius 8 A, D0985 kept as in
+                           the standard 8x scan): find_duplicates.py + krr_classify.py --thickness 8
+                           --census-grouping into
+                           covariant/rcut_scan_8x/rc<r>/interface_r8_both_t8/
+  scan summary             rcut_scan_summary.py --scan-dir covariant/rcut_scan_8x
+  sensitivity, benchmark   descriptor_sensitivity.py / selection_benchmark.py --descriptor-type covariant
+                           (the benchmark takes its KRR settings from the krr task)
+  plots                    plot_descriptor_study.py --descriptor-type covariant, then the standard stage1/
+                           figures and the grain-class overview in SOAP/comparison/
+  --limit N (smoke test) needs --no-analyses and a scratch --covariant-root.
 """
 import argparse
 import os
@@ -50,8 +74,13 @@ from ml_common import sc
 ORDER = {"labels": 0, "covariant": 1, "descriptor": 2, "analysis": 3, "study": 4, "plots": 5}
 LOG_DIR = sc.LOG_DIR / "grid"
 REPRESENTATION_LOG_DIR = sc.LOG_DIR / "representation"
+COVARIANT_LOG_DIR = sc.LOG_DIR / "covariant_study"
+SCAN_R_CUTS = (4.0, 5.0, 6.0, 8.0, 10.0, 12.0)  # the r_cut values of the standard 8x scan (rcut_scan_8x/)
 GRID = {"r_cut": (5.0, 6.0, 8.0), "l_max": (4, 8), "sigma": (0.3, 0.5)}  # = representation_study.GRID
 VECTORIAL = ("polar", "axial", "tensor", "pseudotensor")
+# plot_descriptor_study.py sections drawn for covariant SOAP (its COVARIANT_TYPE_SECTIONS)
+COVARIANT_PLOT_SECTIONS = ("descriptor_settings", "maps_by_setting", "seed_stability", "thickness", "selection",
+                           "vector_sizes", "free_labels", "stage1")
 # Figures that the representation study redraws (selection/ from benchmark v2) are kept here first.
 ARCHIVE_OLD = sc.PROJECT_ROOT / "archive" / "representation_study_20261005"
 
@@ -192,7 +221,7 @@ def representation_tasks(args):
     """Tasks of --study representation (see the module docstring)."""
     tag = ds.soap_tag(ds.REFERENCE)
     reference = covariant_reference(args)
-    study_root = args.out_root / "representation_study"
+    study_root = args.comparison_root / "representation_study"
     tasks = []
     if args.part == "A":
         command = [*rs.PYTHON, str(rs.ML_CODE / "geometry_labels.py"), "--jobs", str(args.labels_cpus),
@@ -246,7 +275,7 @@ def representation_tasks(args):
                                     mem_gb=args.analysis_mem * (2 if phase == "thickness" else 1)))
         tasks.append(study_task("settings_grid", ["--study", "settings_grid", "--covariant", reference,
                                                   *grid_arguments(args)],
-                                args.out_root / "settings_grid", args, needs=[]))
+                                args.comparison_root / "settings_grid", args, needs=[]))
     if not args.no_analyses and not args.no_plots:
         sections = ["selection", "free_labels", "representation_response"] if args.part == "A" else \
             ["representation_response", "settings_grid"]
@@ -254,17 +283,134 @@ def representation_tasks(args):
                    "--benchmark-dir", str(args.out_root / "selection_benchmark_v2"),
                    "--labels-file", str(args.labels_dir / gl.CSV_NAME),
                    "--krr-dir", str(args.out_root / tag / "interface_r8_both_t4_no_boundary"),
-                   "--representation-dir", str(study_root), "--grid-dir", str(args.out_root / "settings_grid"),
-                   "--out-dir", str(args.plot_dir)]
+                   "--representation-dir", str(study_root), "--grid-dir", str(args.comparison_root / "settings_grid"),
+                   "--out-dir", str(args.plot_dir), "--comparison-out-dir", str(args.comparison_plot_dir)]
         if args.limit:
             command += ["--title-prefix", "SMOKE TEST"]
         else:
             command += ["--archive-old", str(ARCHIVE_OLD / f"replaced_by_part{args.part}")]
-        marker = args.plot_dir / "representation_response" / ("phase1_done.txt" if args.part == "A" else "phase2_done.txt")
+        marker = args.comparison_plot_dir / "representation_response" / ("phase1_done.txt" if args.part == "A" else "phase2_done.txt")
         command += ["--done-marker", str(marker)]
         task = rs.Task(name=f"plots {args.part}", kind="plots", cpus=1, mem_gb=8.0,
                        needs=[t.name for t in tasks if t.kind in ("analysis", "study", "labels")],
                        commands=[(command, False)], outputs=[marker])
+        if not args.force and task.finished():
+            task.state = "done"
+        tasks.append(task)
+    return tasks
+
+
+def analysis_task(name, script, argv, outputs, cpus, mem_gb, needs, args):
+    """One analysis script; done when its outputs exist (unless --force)."""
+    task = rs.Task(name=name, kind="analysis", cpus=cpus, mem_gb=mem_gb, needs=needs,
+                   commands=[([*rs.PYTHON, str(rs.ML_CODE / script), *argv], False)], outputs=outputs)
+    if not args.force and task.finished():
+        task.state = "done"
+    return task
+
+
+def covariant_study_tasks(args):
+    """Tasks of --study covariant (see the module docstring)."""
+    tag = ds.soap_tag(ds.REFERENCE)
+    covariant = ["--descriptor-type", "covariant"]
+    runs = ds.covariant_runs()
+    if args.only:
+        known = {"reference" if knob == "reference" else f"{knob} {value}" for knob, value, _ in runs}
+        if set(args.only) - known:
+            raise SystemExit(f"unknown settings {sorted(set(args.only) - known)}; known: {sorted(known)}")
+    tasks, run_of = [], {}
+    for knob, value, settings in runs:
+        setting = "reference" if knob == "reference" else f"{knob} {value}"
+        if args.only and setting != "reference" and setting not in args.only:
+            continue
+        run_name = ds.run_name(settings, "covariant")
+        if knob == "reference":
+            task = covariant_task("covariant reference", settings, run_name, args, args.covariant_cpus,
+                                  args.covariant_mem, args.thicknesses)
+        else:
+            task = covariant_task(f"covariant {setting}", settings, run_name, args, args.grid_covariant_cpus,
+                                  args.grid_covariant_mem, [8], blocks=VECTORIAL, weight=soap_weight(settings))
+        tasks.append(task)
+        if knob in ("reference", "r_cut"):
+            run_of[settings["r_cut"]] = (run_name, task.name)
+    if args.no_analyses:
+        return tasks
+
+    root = args.covariant_out_root
+    runs_done = [task.name for task in tasks]
+    duplicates_dir, krr_dir = root / tag / "interface_r8_both_t4", root / tag / "interface_r8_both_t4_no_boundary"
+    labels = ["--labels", str(args.labels_dir / gl.CSV_NAME)]
+    only = ["--only", *args.only] if args.only else []
+    tasks.append(analysis_task("duplicates", "find_duplicates.py",
+                               [*covariant, "--structure-census", "--single-interfaces", "--out-dir", str(duplicates_dir)],
+                               [duplicates_dir / "duplicates_summary.json"], 2, args.duplicates_mem,
+                               ["covariant reference"], args))
+    tasks.append(analysis_task("krr", "krr_classify.py",
+                               [*covariant, "--regression", *labels, "--census-grouping", "--jobs", str(args.krr_cpus),
+                                "--out-dir",
+                                str(krr_dir)],
+                               [krr_dir / "krr_summary.csv", krr_dir / "krr_regression.csv"], args.krr_cpus,
+                               args.krr_mem, ["covariant reference", "duplicates"], args))
+    for name, subset, folder in (("select", [], ""), ("select plane100", ["--planes", "100", "--min-pair", "1.8"],
+                                                       "plane100_dmin1.8")):
+        out = root / "dim-reduction" / folder if folder else root / "dim-reduction"
+        plots = args.covariant_plot_dir / folder if folder else args.covariant_plot_dir
+        tasks.append(analysis_task(name, "select_gbs.py", [*covariant, *subset, "--out-dir", str(out),
+                                                           "--plot-dir", str(plots)], [out / "run.json"], 1,
+                                   args.duplicates_mem, ["covariant reference"], args))
+
+    scan_dir = root / "rcut_scan_8x"
+    scan_tasks = []
+    for r_cut in SCAN_R_CUTS:
+        if r_cut not in run_of:
+            continue
+        run_name, needs = run_of[r_cut]
+        out = scan_dir / f"rc{r_cut:g}" / mc.vector_tag("interface", 8.0, "both", 8)
+        vector = [*covariant, "--descriptor", run_name, "--thickness", "8", "--out-dir", str(out)]
+        task = rs.Task(name=f"scan rc{r_cut:g}", kind="analysis", cpus=args.scan_cpus, mem_gb=args.scan_mem,
+                       needs=[needs], weight=r_cut,
+                       commands=[([*rs.PYTHON, str(rs.ML_CODE / "find_duplicates.py"), *vector], False),
+                                 ([*rs.PYTHON, str(rs.ML_CODE / "krr_classify.py"), *vector, "--keep-no-boundary", "--census-grouping",
+                                   "--jobs", str(args.scan_cpus)], False)],
+                       outputs=[out / "duplicates_summary.json", out / "krr_summary.csv"])
+        if not args.force and task.finished():
+            task.state = "done"
+        scan_tasks.append(task)
+    tasks += scan_tasks
+    if scan_tasks:
+        summary = rs.Task(name="scan summary", kind="analysis", cpus=1, mem_gb=4.0,
+                          needs=[task.name for task in scan_tasks],
+                          commands=[([*rs.PYTHON, str(rs.ML_CODE / "rcut_scan_summary.py"), "--scan-dir",
+                                      str(scan_dir)], False)],
+                          outputs=[scan_dir / "rcut_scan_summary.csv"])
+        if not args.force and summary.finished():
+            summary.state = "done"
+        tasks.append(summary)
+
+    sensitivity_dir, benchmark_dir = root / "descriptor_sensitivity", root / "selection_benchmark"
+    tasks.append(analysis_task("sensitivity", "descriptor_sensitivity.py",
+                               [*covariant, "--jobs", str(args.analysis_cpus), "--out-dir", str(sensitivity_dir), *only],
+                               [sensitivity_dir / "summary.json"], args.analysis_cpus, args.sensitivity_mem,
+                               runs_done, args))
+    tasks.append(analysis_task("benchmark", "selection_benchmark.py",
+                               [*covariant, "--krr-settings", str(krr_dir), *labels, "--jobs", str(args.analysis_cpus),
+                                "--existing-dir", str(args.covariant_plot_dir), "--out-dir", str(benchmark_dir), *only],
+                               [benchmark_dir / "summary.json"], args.analysis_cpus, args.analysis_mem,
+                               runs_done + ["krr", "select"], args))
+
+    if not args.no_plots:
+        plot = [*rs.PYTHON, str(rs.ML_CODE / "plot_descriptor_study.py")]
+        marker = args.covariant_plot_dir / "plots_done.txt"
+        commands = [([*plot, *covariant, "--sensitivity-dir", str(sensitivity_dir), "--benchmark-dir", str(benchmark_dir),
+                      "--krr-dir", str(krr_dir), "--scan-dir", str(scan_dir),
+                      "--covariant-dir", str(Path(args.covariant_root) / "both_interfaces" / tag),
+                      "--labels-file", str(args.labels_dir / gl.CSV_NAME), "--out-dir", str(args.covariant_plot_dir),
+                      "--comparison-out-dir", str(args.comparison_plot_dir),
+                      "--only", *COVARIANT_PLOT_SECTIONS, "grain_class_overview", "--done-marker", str(marker)], False),
+                    # the same stage1/ figures for standard SOAP, so both trees show the same things
+                    ([*plot, "--only", "stage1", "--out-dir", str(args.plot_dir)], True)]
+        task = rs.Task(name="plots", kind="plots", cpus=1, mem_gb=8.0,
+                       needs=[t.name for t in tasks if t.kind == "analysis"], commands=commands, outputs=[marker])
         if not args.force and task.finished():
             task.state = "done"
         tasks.append(task)
@@ -279,9 +425,9 @@ def default_memory():
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-    parser.add_argument("--study", choices=("descriptor", "representation"), default="descriptor",
+    parser.add_argument("--study", choices=("descriptor", "representation", "covariant"), default="descriptor",
                         help="descriptor: the descriptor study of 2026-10-03 (default); representation: the "
-                             "fifth and sixth studies")
+                             "fifth and sixth studies; covariant: the standard-SOAP analyses on covariant SOAP")
     parser.add_argument("--part", choices=("A", "B"), default="A", help="representation study only: job A or job B")
     parser.add_argument("--only", nargs="+", help="setting names of descriptor_sensitivity.py to include "
                                                   "(e.g. reference \"n_max 12\"); default all")
@@ -303,6 +449,16 @@ def main():
     parser.add_argument("--grid-covariant-cpus", type=int, default=16,
                         help="worker processes per covariant grid run at 8x (default 16)")
     parser.add_argument("--grid-covariant-mem", type=float, default=24.0, help="GB per covariant grid run (default 24)")
+    parser.add_argument("--krr-cpus", type=int, default=16,
+                        help="--study covariant: folds run at once by the Stage 1.4 krr task (default 16)")
+    parser.add_argument("--krr-mem", type=float, default=112.0,
+                        help="GB for that task (default 112: about 5 GB per fold process plus the vectors)")
+    parser.add_argument("--scan-cpus", type=int, default=8, help="--study covariant: folds at once per scan task (default 8)")
+    parser.add_argument("--scan-mem", type=float, default=56.0, help="GB per scan task (default 56)")
+    parser.add_argument("--duplicates-mem", type=float, default=40.0,
+                        help="--study covariant: GB for find_duplicates.py and select_gbs.py on all thicknesses (default 40)")
+    parser.add_argument("--sensitivity-mem", type=float, default=160.0,
+                        help="--study covariant: GB for descriptor_sensitivity.py (default 160)")
     parser.add_argument("--labels-dir", type=Path, default=gl.OUT_DIR, help="where geometry_labels.py writes")
     parser.add_argument("--grid-r-cut", type=float, nargs="+", default=list(GRID["r_cut"]),
                         help="sixth study: r_cut values (default 5 6 8)")
@@ -311,7 +467,13 @@ def main():
                         help="sigma values (default 0.3 0.5)")
     parser.add_argument("--descriptor-root", type=Path, default=sc.STANDARD_ROOT)
     parser.add_argument("--covariant-root", type=Path, default=sc.COVARIANT_ROOT)
-    parser.add_argument("--out-root", type=Path, default=mc.OUTPUT_ROOT, help="where the two analyses write")
+    parser.add_argument("--out-root", type=Path, default=mc.OUTPUT_ROOT,
+                        help="where the standard-SOAP analyses write (default calculations/ML_dscribe/CoGe/standard)")
+    parser.add_argument("--covariant-out-root", type=Path, default=mc.OUTPUT_ROOTS["covariant"],
+                        help="--study covariant: where the analyses write (default calculations/ML_dscribe/CoGe/covariant)")
+    parser.add_argument("--comparison-root", type=Path, default=mc.COMPARISON_ROOT,
+                        help="--study representation: where representation_study and settings_grid write "
+                             "(default calculations/ML_dscribe/CoGe/comparison)")
     parser.add_argument("--log-dir", type=Path, default=None,
                         help=f"default {sc.relative_path(LOG_DIR)}, or {sc.relative_path(REPRESENTATION_LOG_DIR)} "
                              "for --study representation")
@@ -320,30 +482,41 @@ def main():
     parser.add_argument("--no-analyses", action="store_true", help="no analyses (and so no figures)")
     parser.add_argument("--no-plots", action="store_true", help="no figures")
     parser.add_argument("--plot-dir", type=Path, default=mc.plot_root("soap"),
-                        help="where plot_descriptor_study.py writes its folders")
+                        help="where plot_descriptor_study.py writes its standard-SOAP folders")
+    parser.add_argument("--covariant-plot-dir", type=Path, default=mc.plot_root("covariant"),
+                        help="--study covariant: where the covariant figures go")
+    parser.add_argument("--comparison-plot-dir", type=Path, default=mc.COMPARISON_PLOTS,
+                        help="where it writes representation_response/ and settings_grid/")
     parser.add_argument("--limit", type=int, default=0, help="only the first N sym folders per plane (smoke test)")
     parser.add_argument("--force", action="store_true", help="redo analyses and figures whose outputs already exist")
     parser.add_argument("--dry-run", action="store_true", help="print the task list and stop")
     args = parser.parse_args()
-    for name in ("descriptor_cpus", "covariant_cpus", "analysis_cpus", "labels_cpus", "grid_covariant_cpus"):
+    for name in ("descriptor_cpus", "covariant_cpus", "analysis_cpus", "labels_cpus", "grid_covariant_cpus", "krr_cpus",
+                 "scan_cpus"):
         setattr(args, name, max(1, min(getattr(args, name), args.cpus)))
     if args.covariant_mem is None:
         args.covariant_mem = 96.0 if args.study == "representation" else 64.0
     if args.log_dir is None:
-        args.log_dir = REPRESENTATION_LOG_DIR / f"part{args.part}" if args.study == "representation" else LOG_DIR
-    if args.limit and not args.no_analyses and args.study == "descriptor":
+        args.log_dir = {"representation": REPRESENTATION_LOG_DIR / f"part{args.part}",
+                        "covariant": COVARIANT_LOG_DIR}.get(args.study, LOG_DIR)
+    if args.limit and not args.no_analyses and args.study in ("descriptor", "covariant"):
         parser.error("--limit gives an incomplete catalogue; add --no-analyses")
-    if args.limit and (args.descriptor_root == sc.STANDARD_ROOT or args.covariant_root == sc.COVARIANT_ROOT):
+    if args.limit and args.study == "covariant" and args.covariant_root == sc.COVARIANT_ROOT:
+        parser.error("--limit writes partial runs; give a scratch --covariant-root")
+    if args.limit and args.study != "covariant" and (args.descriptor_root == sc.STANDARD_ROOT
+                                                     or args.covariant_root == sc.COVARIANT_ROOT):
         parser.error("--limit writes partial runs; give a scratch --descriptor-root and --covariant-root")
     if args.limit and args.study == "representation":
         defaults = {"--labels-dir": (args.labels_dir, gl.OUT_DIR), "--out-root": (args.out_root, mc.OUTPUT_ROOT),
+                    "--comparison-root": (args.comparison_root, mc.COMPARISON_ROOT),
                     "--plot-dir": (args.plot_dir, mc.plot_root("soap")),
+                    "--comparison-plot-dir": (args.comparison_plot_dir, mc.COMPARISON_PLOTS),
                     "--log-dir": (args.log_dir, REPRESENTATION_LOG_DIR / f"part{args.part}")}
         unchanged = [flag for flag, (value, default) in defaults.items() if Path(value) == Path(default)]
         if unchanged:
             parser.error(f"--limit is a smoke test; give scratch folders for {' '.join(unchanged)}")
 
-    tasks = representation_tasks(args) if args.study == "representation" else build_tasks(args)
+    tasks = {"representation": representation_tasks, "covariant": covariant_study_tasks}.get(args.study, build_tasks)(args)
     if args.mem_gb:
         # A task asking for more than the whole budget would never start.
         for task in tasks:

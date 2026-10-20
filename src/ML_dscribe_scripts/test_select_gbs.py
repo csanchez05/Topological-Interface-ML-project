@@ -163,6 +163,21 @@ class SubsetOutputs(unittest.TestCase):
                 self.assertEqual(img.info["Title"], "[100] GBs (3 distinct)")
                 self.assertEqual(img.size, (1600, 1200))
 
+    def test_long_title_is_shown_on_two_lines_but_kept_whole(self):
+        from PIL import Image
+        title = ("covariant SOAP rc6.0_n8_l6_s0.5, [edge | mid], blocks polar+axial+tensor+pseudotensor; "
+                 "[100] GBs, closest pair \u2265 1.8 \u00c5 (70 distinct)")
+        coordinates = np.array([[1.0, 0.0], [0.0, 1.0], [0.0, 0.0]])
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "map.png"
+            sampling.draw_map(path, coordinates, ["E", "I"], axis_labels=("x", "y"), title=title)
+            with Image.open(path) as img:
+                self.assertEqual(img.info["Title"], title)
+                rgb = np.asarray(img.convert("RGB"))
+            top = (rgb[:120] < 128).all(axis=2)  # dark pixels of the title band
+            self.assertTrue(top.any())
+            self.assertFalse(top[:, :8].any() or top[:, -8:].any())  # not cut off at either edge
+
 
 if __name__ == "__main__":
     unittest.main()

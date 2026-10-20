@@ -11,6 +11,12 @@ Writes into the scan folder:
   rcut_scan_by_thickness.png      cutoff x thickness grids (when several thicknesses were run)
   rcut_scan_pooled.png            accuracy, distinct count and separation against the cutoff
                                   (pooled runs; for a single-thickness scan, that thickness)
+
+Covariant SOAP analyses (--descriptor-type covariant, e.g. calculations/ML_dscribe/CoGe/covariant/
+rcut_scan_8x/, since 2026-10-13) are read too: their settings come from the run's settings.json
+("settings"), the bulk check from its checks.json (largest lambda >= 1 cell average over the atom
+norm, any bulk cell), and median_distance_from_bulk is left empty, because the covariant bulk point is
+zero and a distance relative to its length means nothing.
 """
 import argparse
 import json
@@ -44,6 +50,21 @@ def family_vectors(descriptor_dir, radius):
     return _CACHE[key]
 
 
+def covariant_bulk_check(descriptor_dir):
+    """Largest lambda >= 1 whole-cell average over the atom norm, over every bulk cell (checks.json)."""
+    path = Path(descriptor_dir) / "checks.json"
+    if not path.is_file():
+        return ""
+    bulk = json.loads(path.read_text()).get("bulk", {})
+    values = [value for key, value in bulk.items() if key.startswith("max_") and key.endswith("_all_cells")]
+    return max(values) if values else ""
+
+
+def cell(value, width, spec):
+    """value in the printed table; None or "" (e.g. no coinciding pair, as for covariant SOAP) prints as "-"."""
+    return f"{'-' if value is None or value == '' else format(value, spec):>{width}}"
+
+
 def recorded_descriptor(text):
     """The descriptor folder an analysis recorded that it used.
 
@@ -71,15 +92,22 @@ def read_run(folder, fixed_radius):
         return None
     duplicates = json.loads(duplicates_path.read_text())
     vector = duplicates["vector"]
-    descriptor_dir = recorded_descriptor(vector["descriptor_dir"])
-    settings = json.loads((descriptor_dir / "settings.json").read_text())
-    r_cut, radius, thickness = settings["soap"]["r_cut"], float(vector["radius"]), vector["thickness"]
+    covariant = vector.get("descriptor_type") == "covariant"
+    if covariant:
+        descriptor_dir = sc.PROJECT_ROOT / vector["descriptor_dir"]
+        soap = json.loads((descriptor_dir / "settings.json").read_text())["settings"]
+        vector_length = mc.covariant_module().vector_length(descriptor_dir, vector.get("covariant_blocks"))
+    else:
+        descriptor_dir = recorded_descriptor(vector["descriptor_dir"])
+        settings = json.loads((descriptor_dir / "settings.json").read_text())
+        soap, vector_length = settings["soap"], settings["vector_length"]
+    r_cut, radius, thickness = soap["r_cut"], float(vector["radius"]), vector["thickness"]
     row = {
         "r_cut": r_cut, "interface_radius": radius, "thickness": thickness,
         "vector": "matched" if np.isclose(radius, r_cut + 2) else "fixed",
         "also_fixed": bool(np.isclose(radius, fixed_radius)),
-        "n_max": settings["soap"]["n_max"], "l_max": settings["soap"]["l_max"], "sigma": settings["soap"]["sigma"],
-        "vector_length": settings["vector_length"],
+        "n_max": soap["n_max"], "l_max": soap["l_max"], "sigma": soap["sigma"],
+        "vector_length": vector_length,
         "n_families": duplicates["n_families"],
         "n_structures": duplicates.get("n_structures", duplicates["n_families"]),
         "n_distinct": duplicates["n_distinct"],
@@ -106,8 +134,11 @@ def read_run(folder, fixed_radius):
         noise = duplicates["tolerance"].get("thickness_noise") or {}
         row["thickness_noise_max"] = noise.get("max", "")
 
-    for entry in sc.read_csv(krr_path):
-        if entry["grouping"] != "distinct":
+    entries = sc.read_csv(krr_path)
+    # krr_classify.py --census-grouping (covariant SOAP): the census folds are the fair score.
+    row["grouping"] = "census" if any(entry["grouping"] == "census" for entry in entries) else "distinct"
+    for entry in entries:
+        if entry["grouping"] != row["grouping"]:
             continue
         if entry["dataset"] == "all" and entry["label"] in LABELS:
             row[f"acc_{entry['label']}"] = float(entry["krr_accuracy"])
@@ -119,6 +150,12 @@ def read_run(folder, fixed_radius):
     row["structures_where_radius_exceeds_quarter_cell"] = krr["notes"].get("families_where_radius_exceeds_quarter_cell", 0)
     row["krr_seconds"] = krr["seconds"]
 
+    if covariant:
+        row["descriptor_type"] = "covariant"
+        row["bulk_max_rel_diff"] = covariant_bulk_check(descriptor_dir)
+        row["median_distance_from_bulk"] = ""
+        row["folder"] = sc.relative_path(folder)
+        return row
     bulk_path = sc.run_dir("global", sc.soap_tag(settings["soap"])) / "bulk_invariance.json"
     if bulk_path.exists():
         bulk = json.loads(bulk_path.read_text())
@@ -150,7 +187,7 @@ def rows_of(rows, vector):
     return [row for row in rows if row["vector"] == "fixed" or row["also_fixed"]]
 
 
-def plot_lines(rows, path, structure_count, what):
+def plot_lines(rows, path, structure_count, what, structure_label="distinct structures"):
     import matplotlib
     matplotlib.use("Agg")
     import matplotlib.pyplot as plt
@@ -198,7 +235,7 @@ def plot_lines(rows, path, structure_count, what):
         line(distinct, x, [row["n_distinct"] for row in chosen], SERIES[0], "Distinct GBs")
         if structure_count:
             distinct.axhline(structure_count, color=MUTED, linewidth=1)
-            distinct.annotate(f"distinct structures ({structure_count:,})", (x[0], structure_count),
+            distinct.annotate(f"{structure_label} ({structure_count:,})", (x[0], structure_count),
                               xytext=(0, 4), textcoords="offset points", color=MUTED, fontsize=8)
         step = 5 if max(counts) - min(counts) <= 40 else 10 ** int(np.floor(np.log10(max(counts) - min(counts))))
         distinct.set_ylim(step * np.floor(min(counts) / step) - step, step * np.ceil(max(counts) / step) + step)
@@ -231,7 +268,7 @@ def plot_lines(rows, path, structure_count, what):
     plt.close(figure)
 
 
-def plot_grids(rows, path, structure_count):
+def plot_grids(rows, path, structure_count, structure_label="structures"):
     """Cutoff x thickness grids: one blue ramp per panel, the value written in every cell."""
     import matplotlib
     matplotlib.use("Agg")
@@ -245,7 +282,7 @@ def plot_grids(rows, path, structure_count):
     vectors = [(key, title) for key, title in VECTORS if rows_of(rows, key)]
     panels = [
         ("acc_grain_class", "Step 1.4: operation accuracy (grain class)", lambda v: f"{v:.2f}", Normalize),
-        ("n_distinct", "Step 1.5: distinct GB vectors" + (f" ({structure_count:,} structures)" if structure_count else ""),
+        ("n_distinct", "Step 1.5: distinct GB vectors" + (f" ({structure_count:,} {structure_label})" if structure_count else ""),
          lambda v: f"{int(v):,}", Normalize),
         ("smallest_other_distance", "Closest two different GBs (relative distance ×10⁻⁴)",
          lambda v: f"{v * 1e4:.1f}", LogNorm),
@@ -324,21 +361,33 @@ def main():
     sc.write_json(args.scan_dir / "rcut_scan_summary.json", {
         "rows": rows, "distinct_structures": sorted(structure_counts), "n_analyses": len(rows),
         "note": "accuracies use the 'distinct' grouping: copies of one GB (and, when pooled, its other "
-                "thicknesses) never straddle training and testing",
+                "thicknesses) never straddle training and testing; runs with krr_classify.py --census-grouping "
+                "(covariant SOAP) use the 'census' grouping, which also keeps turned copies together "
+                "(column 'grouping')",
         **sc.run_metadata()})
 
     pooled = [row for row in rows if row["thickness"] == "all"]
     single = [row for row in rows if row["thickness"] != "all"]
     thicknesses = sorted({row["thickness"] for row in single})
+    covariant = any(row.get("descriptor_type") == "covariant" for row in rows)
+    prefix = "Covariant SOAP [C_edge | C_mid], lambda >= 1: " if covariant else ""
+    labels = {}
+    if covariant:
+        # Covariant SOAP forms no group of coinciding vectors, so the structure check confirms every cell
+        # (n_distinct_by_structure = all cells); the line to compare with is the structure census instead.
+        structure_count = len({entry["structure_class"] for entry in sc.read_csv(mc.CENSUS)})
+        labels = {"structure_label": "distinct GBs (structure census)"}
     if not args.no_plot:
         if pooled:
             plot_lines(pooled, args.scan_dir / "rcut_scan_pooled.png", structure_count,
-                       f"All thicknesses pooled ({pooled[0]['n_structures']:,} structures per cutoff)")
+                       f"{prefix}All thicknesses pooled ({pooled[0]['n_structures']:,} structures per cutoff)", **labels)
         elif len(thicknesses) == 1:
             plot_lines(single, args.scan_dir / "rcut_scan_pooled.png", structure_count,
-                       f"{thicknesses[0]}x thickness only ({single[0]['n_structures']:,} structures per cutoff)")
+                       f"{prefix}{thicknesses[0]}x thickness only ({single[0]['n_structures']:,} structures per cutoff)",
+                       **labels)
         if len(thicknesses) > 1:
-            plot_grids(single, args.scan_dir / "rcut_scan_by_thickness.png", structure_count)
+            plot_grids(single, args.scan_dir / "rcut_scan_by_thickness.png", structure_count,
+                       **({"structure_label": "GBs by structure census"} if covariant else {}))
 
     print(f"{'vector':>8} {'thick':>5} {'r_cut':>5} {'radius':>6} {'plane':>6} {'operation':>9} {'(base)':>6} {'handed':>6} "
           f"{'distinct':>8} {'closest different':>17} {'farthest copies':>15} {'from bulk':>9}")
@@ -346,8 +395,9 @@ def main():
         print(f"{row['vector']:>8} {str(row['thickness']):>5} {row['r_cut']:>5g} {row['interface_radius']:>6g} "
               f"{row.get('acc_plane', np.nan):>6.3f} {row.get('acc_grain_class', np.nan):>9.3f} "
               f"{row.get('baseline_grain_class', np.nan):>6.2f} {row.get('acc_handedness', np.nan):>6.3f} "
-              f"{row['n_distinct']:>8} {row['smallest_other_distance']:>17.2e} "
-              f"{row['largest_coinciding_distance']:>15.2e} {row['median_distance_from_bulk']:>9.3f}")
+              f"{row['n_distinct']:>8} {cell(row['smallest_other_distance'], 17, '.2e')} "
+              f"{cell(row['largest_coinciding_distance'], 15, '.2e')} "
+              f"{cell(row['median_distance_from_bulk'], 9, '.3f')}")
     print(f"{len(rows)} analyses; tables and figures in {args.scan_dir}")
     return 0
 

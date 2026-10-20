@@ -31,7 +31,7 @@ Two more tests:
               then one map per setting, to see whether a setting moves the map more than
               a new seed does
 
-Outputs in calculations/ML_dscribe/CoGe/descriptor_sensitivity/:
+Outputs in calculations/ML_dscribe/CoGe/standard/descriptor_sensitivity/:
   sensitivity.csv      one row per setting
   knob_ranking.csv     per knob, the largest change over its values
   seed_robustness.csv  seed-to-seed pairs, and each setting's map against the reference map
@@ -44,12 +44,45 @@ Outputs in calculations/ML_dscribe/CoGe/descriptor_sensitivity/:
 
 Needs every SOAP run of soap_runs() (descriptor_grid.py makes them). --only runs a
 subset, e.g. --only reference "r_cut 8" "region global".
+
+--descriptor-type covariant (since 2026-10-13): the same study for covariant SOAP, outputs in
+calculations/ML_dscribe/CoGe/covariant/descriptor_sensitivity/. The vector is [C_edge | C_mid] of the
+lambda >= 1 blocks (covariant_common.py), never averaged over the two interfaces; the bulk point is
+the pristine whole-cell mean (close to zero). The settings are those of soap_runs() without weighting
+(the covariant code has none) and without l_max 2 (it fails the bulk check, COVARIANT_LEFT_OUT); runs
+away from the reference are 8x only (<tag>_t8, covariant_runs()). Instead of r6/r10, nonbulk and
+one-mean (not stored for covariant runs) there are:
+  blocks      lambda 1 only (polar, axial), lambda 2 only (tensor, pseudotensor), and lambda 0-2
+              (with the invariant block), all at the reference run
+  region      edge or mid interface only, and the whole-cell mean (D)
+The covariant vectors are wide (about 119k features at the reference), so for vectors wider than
+WIDE the distances, the reconstruction errors and the t-SNE/UMAP input use the vectors written in an
+orthonormal basis of their own row space (narrow()): the same distances and the same regressions,
+with at most as many columns as rows. soap_cpu_hours is then the cost of the 1,541 8x structures.
+
+--descriptor-type ace (since 2026-10-13): the same study for invariant ACE (src/ACE/CoGe/), outputs in
+calculations/ML_ACE/CoGe/descriptor_sensitivity/. The vector is [Co mean | Ge mean] of the blocks nu1,
+nu2, nu3_even and nu3_odd, each divided by its pristine-bulk length (ace_common.load_gb_vectors); the
+bulk point is the pristine cell of the same setting, blocks and scaling. The settings are those of
+ace_grid.ace_runs(): the SOAP knobs (weighting: pow only, at r_cut 6, 8 and 12) plus the nu3 expansion
+(n3, l3); runs away from the reference are 8x only (<tag>_t8). Instead of nonbulk and one-mean (not
+stored for ACE runs) there are:
+  blocks      nu2 only (the SOAP power spectrum), nu1 + nu2, nu3 only (even + odd), and every block
+              but nu3_odd (the one that sees handedness), all at the reference run
+  processing  the blocks joined unscaled (not divided by their pristine length)
+The interface radii 6 and 10 come from <reference tag>_t8. At l3 2 the nu3_odd block vanishes in
+pristine bulk (B20 atoms sit on 3-fold axes), so it cannot be divided by its pristine length: that run
+is compared without nu3_odd, against the reference without nu3_odd. ACE vectors (about 26k features at
+the reference) are wide, so narrow() applies as for covariant SOAP, and soap_cpu_hours is the cost of
+the 8x structures.
 """
 import argparse
 import json
 import multiprocessing
 import os
+import shutil
 import sys
+import tempfile
 import time
 from concurrent.futures import ProcessPoolExecutor
 from dataclasses import asdict, dataclass, field
@@ -60,7 +93,9 @@ import numpy as np
 import ml_common as mc
 from ml_common import sc
 
-OUT_DIR = mc.OUTPUT_ROOT / "descriptor_sensitivity"
+STUDY = "descriptor_sensitivity"
+OUT_DIR = mc.OUTPUT_ROOT / STUDY                 # standard SOAP; other types: mc.OUTPUT_ROOTS[type] / STUDY
+DESCRIPTOR_TYPES = ("soap", "covariant", "ace")
 REFERENCE = {"r_cut": 6.0, "n_max": 8, "l_max": 6, "sigma": 0.5, "weighting": None}
 N_PICKS = 30
 N_NEIGHBOURS = 10
@@ -68,6 +103,16 @@ SEEDS = (42, 0, 1, 2, 3, 4, 5, 6, 7, 8)
 METHODS = ("tsne", "umap")
 SCORES = ("spearman", "knn10_kept", "gfre_from_base", "gfre_to_base", "procrustes_pca", "fps_overlap")
 KNOBS = ("r_cut", "n_max", "l_max", "sigma", "weighting", "region", "processing")
+COVARIANT_KNOBS = ("r_cut", "n_max", "l_max", "sigma", "blocks", "region", "processing")
+ACE_KNOBS = ("r_cut", "n_max", "l_max", "sigma", "n3", "l3", "weighting", "blocks", "region", "processing")
+ALL_KNOBS = KNOBS + ("blocks", "n3", "l3")
+# ACE: the blocks of the l3 <= 2 runs, whose nu3_odd block vanishes in pristine bulk
+ACE_NO_ODD = ("nu1", "nu2", "nu3_even")
+# Vectors wider than this are handled in their row space (narrow()) and, in the thickness test, in
+# float32 with randomized PCA; standard SOAP vectors (at most ~7k features) never are.
+WIDE = 20_000
+# Node-local folder of the 1,112 distinct vectors of each variant, set up by main() for the workers.
+CACHE_ENV = "DESCRIPTOR_SENSITIVITY_CACHE"
 
 
 # --------------------------------------------------------------------------- settings
@@ -100,8 +145,53 @@ def soap_runs():
     return runs
 
 
+# Covariant runs left out of the study. l_max 2 fails check_covariant.py's bulk test (job 13016,
+# 2026-10-13): even the pristine cell's axial and pseudotensor cell averages are 0.26 and 0.98 of one
+# atom's vector (at l_max 4-10 all blocks stay <= 1e-6). Cause not investigated (user, 2026-10-13).
+COVARIANT_LEFT_OUT = (("l_max", "2"),)
+
+
+def covariant_runs():
+    """(knob, value, settings) of every covariant SOAP run of the study: soap_runs() without weighting
+    and without COVARIANT_LEFT_OUT.
+
+    The covariant code has no radial weighting. Runs other than the reference are made at 8x only,
+    with the lambda >= 1 blocks (run_name: <tag>_t8)."""
+    return [run for run in soap_runs() if run[0] != "weighting" and run[:2] not in COVARIANT_LEFT_OUT]
+
+
+def ace_grid_module():
+    """src/ACE/CoGe/ace_grid.py (the ACE runs of the screens), imported on first use.
+
+    sys.path is restored afterwards: ace_grid puts src/ACE/CoGe/covariant first, and two script names
+    there (check_covariant.py, covariant_descriptor.py) repeat those of src/dscribe/CoGe/covariant."""
+    if "ace_grid" not in sys.modules:
+        saved = list(sys.path)
+        sys.path.insert(0, str(mc.ACE_SCRIPTS))
+        try:
+            import ace_grid  # noqa: F401
+        finally:
+            sys.path[:] = saved
+    return sys.modules["ace_grid"]
+
+
+def ace_runs():
+    """(knob, value, ACE flags) of every invariant ACE run of the study (ace_grid.ace_runs()); the
+    reference first. Runs other than the reference are made at 8x only (run name <tag>_t8)."""
+    return ace_grid_module().ace_runs()
+
+
+RUNS = {"soap": soap_runs, "covariant": covariant_runs, "ace": ace_runs}
+
+
 def soap_tag(soap):
     return sc.soap_tag({"rbf": "gto", **soap})
+
+
+def run_name(settings, descriptor_type="soap"):
+    """Folder name of a descriptor run: the SOAP tag; covariant runs away from the reference are <tag>_t8."""
+    tag = soap_tag(settings)
+    return f"{tag}_t8" if descriptor_type == "covariant" and settings != REFERENCE else tag
 
 
 @dataclass
@@ -117,14 +207,121 @@ class Variant:
     mean: str = "species"        # species: [Co mean | Ge mean]; all: one mean over all atoms
     scale: str = "none"          # none, standard (each feature to mean 0, spread 1), unit (each vector to length 1)
     baseline: str = "reference"
+    descriptor_type: str = "soap"
+    blocks: tuple = None         # covariant SOAP / ACE: the blocks of the vector (None: the type's default blocks)
+    run: str = None              # folder name of the descriptor run, if not the SOAP tag
+    ace_scaling: str = None      # ACE only: "pristine" (each block divided by its pristine length) or "none"
 
     @property
     def tag(self):
-        return soap_tag(self.soap)
+        return self.run or soap_tag(self.soap)
+
+    def folder(self):
+        """The descriptor run folder this vector is read from."""
+        return mc.run_dir("global" if self.kind == "global" else "both_interfaces", self.tag, self.descriptor_type)
+
+    def vector_file(self):
+        if self.descriptor_type == "covariant":
+            return self.folder() / mc.covariant_module().FILE
+        if self.descriptor_type == "ace":
+            # as for standard SOAP, every ACE run is checked by its GB interface file
+            return mc.run_dir("both_interfaces", self.tag, "ace") / mc.ace_module().INTERFACE_FILE
+        # standard SOAP: every tag is checked by its GB interface file, as before 2026-10-13
+        return sc.run_dir("both_interfaces", self.tag) / sc.INTERFACE_FILE
 
 
-def variants(only=None):
+def variants(only=None, descriptor_type="soap"):
     """Every vector of the study, the reference first. only: names to keep."""
+    if descriptor_type == "covariant":
+        out = covariant_variants()
+    elif descriptor_type == "ace":
+        out = ace_variants()
+    elif descriptor_type == "soap":
+        out = soap_variants()
+    else:
+        raise ValueError(f"descriptor_sensitivity has no settings for descriptor type {descriptor_type!r}")
+    if only:
+        unknown = set(only) - {v.name for v in out}
+        if unknown:
+            raise ValueError(f"unknown settings {sorted(unknown)}; known: {[v.name for v in out]}")
+        out = [v for v in out if v.name in only or v.name == "reference"]
+    names = {v.name for v in out}
+    for v in out:
+        if v.baseline not in names:
+            v.baseline = "reference"
+    return out
+
+
+def covariant_variants():
+    """The covariant SOAP vectors: [C_edge | C_mid] of the lambda >= 1 blocks for every run, then other
+    blocks, regions and processing at the reference run."""
+    out = []
+    for knob, value, soap in covariant_runs():
+        name = "reference" if knob == "reference" else f"{knob} {value}"
+        out.append(Variant(name, knob, value, soap, descriptor_type="covariant", run=run_name(soap, "covariant")))
+    at_reference = {"descriptor_type": "covariant", "run": soap_tag(REFERENCE)}
+    out += [Variant("blocks lambda 1", "blocks", "lambda 1 (polar, axial)", blocks=("polar", "axial"), **at_reference),
+            Variant("blocks lambda 2", "blocks", "lambda 2 (tensor, pseudotensor)", blocks=("tensor", "pseudotensor"),
+                    **at_reference),
+            Variant("blocks with invariant", "blocks", "lambda 0-2 (with the invariant)", blocks=mc.COVARIANT_BLOCKS,
+                    **at_reference),
+            Variant("region edge plane only", "region", "edge plane only", planes="edge", **at_reference),
+            Variant("region mid plane only", "region", "mid plane only", planes="mid", **at_reference),
+            Variant("region global", "region", "global", kind="global", **at_reference),
+            Variant("processing standardised", "processing", "standardised", scale="standard", **at_reference),
+            Variant("processing unit length", "processing", "unit length", scale="unit", **at_reference)]
+    return out
+
+
+def ace_variants():
+    """The ACE vectors: every block, each divided by its pristine length, for every run of ace_runs();
+    then other blocks, regions and processing at the reference run.
+
+    Weighting at r_cut 8 and 12 is compared with the unweighted run at that r_cut, as for standard SOAP.
+    The l3 <= 2 runs leave out nu3_odd (it vanishes in pristine bulk there, see the module docstring)
+    and are compared with the reference without it."""
+    grid = ace_grid_module()
+    out = []
+    for knob, value, flags in grid.ace_runs():
+        name = "reference" if knob == "reference" else f"{knob} {value}"
+        baseline, blocks = "reference", None
+        if knob == "weighting" and flags["r_cut"] != grid.REFERENCE["r_cut"]:
+            baseline = f"r_cut {flags['r_cut']:g}"
+        if knob == "l3" and flags["l3"] <= 2:
+            baseline, blocks = "blocks without nu3_odd", ACE_NO_ODD
+        out.append(Variant(name, knob, value, dict(flags), baseline=baseline, descriptor_type="ace", blocks=blocks,
+                           run=grid.run_name(flags), ace_scaling="pristine"))
+    reference = grid.run_name(grid.REFERENCE)
+    at_reference = {"soap": dict(grid.REFERENCE), "descriptor_type": "ace", "run": reference, "ace_scaling": "pristine"}
+    radii = {**at_reference, "run": f"{reference}_t8"}  # the 8x copy of the reference stores radii 6, 8 and 10
+    out += [Variant("blocks nu2 only", "blocks", "nu2 only (the SOAP power spectrum)", blocks=("nu2",), **at_reference),
+            Variant("blocks nu1+nu2", "blocks", "nu1 + nu2 (2- and 3-body)", blocks=("nu1", "nu2"), **at_reference),
+            Variant("blocks nu3 only", "blocks", "nu3 only (4-body, even and odd)", blocks=("nu3_even", "nu3_odd"),
+                    **at_reference),
+            Variant("blocks without nu3_odd", "blocks", "without nu3_odd (blind to handedness)", blocks=ACE_NO_ODD,
+                    **at_reference),
+            Variant("region interface r6", "region", "interface r6", radius=6.0, **radii),
+            Variant("region interface r10", "region", "interface r10", radius=10.0, **radii),
+            Variant("region edge plane only", "region", "edge plane only", planes="edge", **at_reference),
+            Variant("region mid plane only", "region", "mid plane only", planes="mid", **at_reference),
+            Variant("region global", "region", "global", kind="global", **at_reference),
+            Variant("processing blocks unscaled", "processing", "blocks not divided by their pristine length",
+                    **{**at_reference, "ace_scaling": "none"}),
+            Variant("processing standardised", "processing", "standardised", scale="standard", **at_reference),
+            Variant("processing unit length", "processing", "unit length", scale="unit", **at_reference)]
+    return out
+
+
+def variant_record(variant):
+    """The variant as a dict for summary.json (ace_scaling only for ACE, so other types' records stay as they were)."""
+    record = asdict(variant) | {"tag": variant.tag}
+    if variant.ace_scaling is None:
+        record.pop("ace_scaling")
+    return record
+
+
+def soap_variants():
+    """The standard SOAP vectors, the reference first."""
     out = []
     for knob, value, soap in soap_runs():
         name = "reference" if knob == "reference" else f"{knob} {value}"
@@ -141,15 +338,6 @@ def variants(only=None):
             Variant("processing one mean", "processing", "one mean over all atoms", mean="all"),
             Variant("processing standardised", "processing", "standardised", scale="standard"),
             Variant("processing unit length", "processing", "unit length", scale="unit")]
-    if only:
-        unknown = set(only) - {v.name for v in out}
-        if unknown:
-            raise ValueError(f"unknown settings {sorted(unknown)}; known: {[v.name for v in out]}")
-        out = [v for v in out if v.name in only or v.name == "reference"]
-    names = {v.name for v in out}
-    for v in out:
-        if v.baseline not in names:
-            v.baseline = "reference"
     return out
 
 
@@ -181,11 +369,66 @@ def process(X, bulk, scale):
     raise ValueError(f"unknown scale {scale!r}")
 
 
+def cache_key(variant):
+    """File name of a variant's distinct vectors in the cache: everything load_distinct reads by."""
+    blocks = "+".join(variant.blocks) if variant.blocks else "default"
+    scaling = f"__{variant.ace_scaling}" if variant.ace_scaling else ""
+    return (f"{variant.descriptor_type}__{variant.tag}__{variant.kind}__r{variant.radius:g}__{variant.planes}"
+            f"__{blocks}{scaling}")
+
+
+def block_source(variant, blocks=None):
+    """Keyword arguments of mc.load_distinct / mc.load_all_vectors for the variant's type, blocks and scaling."""
+    blocks = variant.blocks if blocks is None else blocks
+    if variant.descriptor_type == "ace":
+        return {"descriptor_type": "ace", "ace_blocks": list(blocks) if blocks else None,
+                "ace_scaling": variant.ace_scaling or "pristine"}
+    return {"descriptor_type": variant.descriptor_type, "covariant_blocks": blocks}
+
+
+def distinct_vectors(variant):
+    """mc.load_distinct for the variant (X float64, undefined rows NaN), through the node-local cache
+    when main() set one up (CACHE_ENV).
+
+    The cache keeps every task from reading a whole run again: the covariant reference file holds
+    7 GB for all thicknesses, of which the study needs 1,112 rows. Values are stored exactly (float32
+    when that loses nothing, else float64)."""
+    import pandas as pd
+
+    folder = os.environ.get(CACHE_ENV)
+    path = Path(folder) / f"{cache_key(variant)}.npz" if folder else None
+    if path is not None and path.is_file():
+        with np.load(path, allow_pickle=False) as data:
+            X, bulk = data["X"].astype(np.float64), data["bulk"]
+        return X, pd.read_csv(path.with_suffix(".csv"), dtype={"plane": str}), bulk
+    X, table, bulk = mc.load_distinct(variant.tag, variant.kind, variant.radius, variant.planes,
+                                      allow_undefined=True, **block_source(variant))
+    if path is not None:
+        stored = X.astype(np.float32)
+        if not np.array_equal(stored.astype(np.float64), X, equal_nan=True):
+            stored = X
+        suffix = f".{os.getpid()}.tmp"
+        table.to_csv(str(path.with_suffix(".csv")) + suffix, index=False)
+        with open(str(path) + suffix, "wb") as handle:
+            np.savez(handle, X=stored, bulk=bulk)
+        os.replace(str(path.with_suffix(".csv")) + suffix, path.with_suffix(".csv"))
+        os.replace(str(path) + suffix, path)  # the npz last: its presence means both files are complete
+    return X, table, bulk
+
+
+def warm_task(variant):
+    """Load one variant into the cache (run once per cache key before the other tasks)."""
+    started = time.time()
+    X, _, _ = distinct_vectors(variant)
+    return cache_key(variant), X.shape, round(time.time() - started, 1)
+
+
 def load_variant(variant):
     """(X, table, bulk) for the 1,112 distinct GBs at 8x; undefined vectors are rows of NaN."""
-    X, table, bulk = mc.load_distinct(variant.tag, variant.kind, variant.radius, variant.planes,
-                                      allow_undefined=True)
+    X, table, bulk = distinct_vectors(variant)
     if variant.mean == "all":
+        if variant.descriptor_type != "soap":
+            raise ValueError("one mean over all atoms is only set up for standard SOAP")
         if variant.kind != "interface":
             raise ValueError("one mean over all atoms is only set up for the interface vector")
         counts = species_counts(variant.tag, variant.radius, table["family"])
@@ -198,21 +441,46 @@ def load_variant(variant):
     return X, table, bulk
 
 
-def soap_cpu_hours(tag):
-    """CPU hours of the GB SOAP run (wall time x workers), from its settings.json."""
-    path = sc.run_dir("both_interfaces", tag) / "settings.json"
+def soap_cpu_hours(tag, descriptor_type="soap"):
+    """CPU hours of the GB SOAP run (wall time x workers), from its settings.json.
+
+    Covariant SOAP and ACE runs: the cost of the 1,541 8x structures (a run made for more thicknesses,
+    such as the reference, is scaled by the 8x share of its atoms), so that 8x-only runs and the
+    reference compare."""
+    if descriptor_type in ("covariant", "ace"):
+        path = mc.run_dir("both_interfaces", tag, descriptor_type) / "settings.json"
+    else:
+        path = sc.run_dir("both_interfaces", tag) / "settings.json"
     settings = json.loads(path.read_text())
     if settings.get("limit"):
         return None
-    return settings["seconds"] * settings["workers"] / 3600.0
+    hours = settings["seconds"] * settings["workers"] / 3600.0
+    if descriptor_type in ("covariant", "ace") and settings.get("thicknesses") != [8]:
+        import pandas as pd
+
+        index = pd.read_csv(path.parent / "index.csv", usecols=["thickness", "n_atoms"])
+        hours *= index.loc[index["thickness"] == 8, "n_atoms"].sum() / index["n_atoms"].sum()
+    return hours
 
 
 # --------------------------------------------------------------------------- scores
 
+def narrow(X):
+    """X written in an orthonormal basis of its own row space, for vectors wider than WIDE (else X).
+
+    X = U S V^T, and X V = U S keeps every distance, inner product and centred inner product (the
+    mean of rows lies in their span), so distances, PCA and the ridge regressions of the reconstruction
+    error are the same, with at most as many columns as rows."""
+    if X.shape[1] <= WIDE:
+        return X
+    U, s, _ = np.linalg.svd(np.asarray(X, dtype=np.float64), full_matrices=False)
+    return U * s
+
+
 def square_distances(X):
     from scipy.spatial.distance import pdist, squareform
 
-    return squareform(pdist(X))
+    return squareform(pdist(narrow(X)))
 
 
 def nearest(D, k):
@@ -242,13 +510,15 @@ def reconstruction_error(X, Y, seed=0):
 
     order = np.random.default_rng(seed).permutation(len(X))
     half = len(X) // 2
-    return float(global_reconstruction_error(X, Y, test_idx=order[half:], train_idx=order[:half]))
+    # narrow(): the regression would otherwise hold a features x features coefficient matrix
+    # (119k^2 for covariant SOAP); skmatter's default scaler and ridge are rotation-invariant.
+    return float(global_reconstruction_error(narrow(X), narrow(Y), test_idx=order[half:], train_idx=order[:half]))
 
 
 def pca_map(X):
     from sklearn.decomposition import PCA
 
-    return PCA(n_components=2, svd_solver="full").fit_transform(X)
+    return PCA(n_components=2, svd_solver="full").fit_transform(narrow(X))
 
 
 def aligned(reference_map, other_map):
@@ -265,7 +535,7 @@ def aligned(reference_map, other_map):
 def variance_profile(X):
     from sklearn.decomposition import PCA
 
-    ratio = PCA(svd_solver="full").fit(X).explained_variance_ratio_
+    ratio = PCA(svd_solver="full").fit(narrow(X)).explained_variance_ratio_
     cumulative = np.cumsum(ratio)
     return {"pc1": float(ratio[0]), "pc2": float(ratio[1]),
             "n_pc90": int(np.searchsorted(cumulative, 0.90) + 1),
@@ -284,14 +554,16 @@ def compare(A, bulk_A, B, bulk_B, families):
     """
     keep = np.isfinite(A).all(axis=1) & np.isfinite(B).all(axis=1)
     A, B, families = A[keep], B[keep], np.asarray(families)[keep]
-    D_a, D_b = square_distances(A), square_distances(B)
-    disparity, _, turned = aligned(pca_map(A), pca_map(B))
+    narrow_A, narrow_B = narrow(A), narrow(B)  # once here; narrow() of a narrowed array is itself
+    D_a, D_b = square_distances(narrow_A), square_distances(narrow_B)
+    disparity, _, turned = aligned(pca_map(narrow_A), pca_map(narrow_B))
+    # FPS starts from the GB farthest from bulk, which needs the full vectors
     picks_a, picks_b = families[fps_picks(A, bulk_A)], families[fps_picks(B, bulk_B)]
     scores = {"n_gbs": int(keep.sum()),
               "spearman": distance_correlation(D_a, D_b),
               "knn10_kept": neighbours_kept(D_a, D_b),
-              "gfre_from_base": reconstruction_error(A, B),
-              "gfre_to_base": reconstruction_error(B, A),
+              "gfre_from_base": reconstruction_error(narrow_A, narrow_B),
+              "gfre_to_base": reconstruction_error(narrow_B, narrow_A),
               "procrustes_pca": disparity,
               "fps_overlap": len(set(picks_a) & set(picks_b))}
     return scores, turned, keep
@@ -309,7 +581,12 @@ def variant_task(variant, baseline, reference):
            "tag": variant.tag, "kind": variant.kind, "radius": variant.radius if variant.kind == "interface" else None,
            "planes": variant.planes, "mean": variant.mean, "scale": variant.scale,
            "vector_length": int(X.shape[1]), "n_undefined": int((~defined).sum()),
-           "soap_cpu_hours": soap_cpu_hours(variant.tag)}
+           "soap_cpu_hours": soap_cpu_hours(variant.tag, variant.descriptor_type)}
+    if variant.descriptor_type != "soap":
+        row["descriptor_type"] = variant.descriptor_type
+        row["blocks"] = "+".join(variant.blocks) if variant.blocks else "default"
+    if variant.ace_scaling is not None:
+        row["ace_scaling"] = variant.ace_scaling
     row.update(variance_profile(X[defined]))
     loaded = {variant.name: (X, bulk)}
     for other in (baseline, reference):
@@ -335,40 +612,55 @@ def embedding_task(variant, method, seed):
     X, table, bulk = load_variant(variant)
     keep = np.isfinite(X).all(axis=1)
     families = table["family"].to_numpy()[keep]
-    coordinates, _ = select_gbs.embed(np.vstack([X[keep], bulk]), method, seed)
+    coordinates, _ = select_gbs.embed(narrow(np.vstack([X[keep], bulk])), method, seed)
     points = coordinates[:-1]
     full_map = np.full((len(X) + 1, 2), np.nan)
     full_map[np.append(keep, True)] = coordinates
     median, _, _, _ = select_gbs.cluster_centers(points, families, seed)
     return {"name": variant.name, "method": method, "seed": seed, "map": full_map,
-            "trustworthiness": float(trustworthiness(X[keep], points, n_neighbors=N_NEIGHBOURS)),
+            "trustworthiness": float(trustworthiness(narrow(X[keep]), points, n_neighbors=N_NEIGHBOURS)),
             "knn10_kept": neighbours_kept(square_distances(X[keep]), square_distances(points)),
             "fps": families[select_gbs.farthest_points(points, families)].tolist(),
             "median": families[median].tolist(), "seconds": round(time.time() - started, 1)}
 
 
-def thickness_share(values, labels):
-    """Share of the spread of values (rows) that lies between the groups given by labels."""
-    values = np.asarray(values, dtype=np.float64).reshape(len(values), -1)
-    centre = values.mean(axis=0)
-    total = np.square(values - centre).sum()
+def thickness_share(values, labels, chunk=512):
+    """Share of the spread of values (rows) that lies between the groups given by labels.
+
+    Vectors wider than WIDE stay in their own dtype and are summed in float64 chunks of rows."""
+    values = np.asarray(values).reshape(len(values), -1)
+    if values.shape[1] <= WIDE:
+        values = np.asarray(values, dtype=np.float64)
+        centre = values.mean(axis=0)
+        total = np.square(values - centre).sum()
+    else:
+        centre = values.mean(axis=0, dtype=np.float64)
+        total = sum(float(np.square(values[i:i + chunk].astype(np.float64) - centre).sum())
+                    for i in range(0, len(values), chunk))
     between = 0.0
     for label in np.unique(labels):
         members = labels == label
-        between += members.sum() * np.square(values[members].mean(axis=0) - centre).sum()
+        between += members.sum() * np.square(values[members].mean(axis=0, dtype=np.float64) - centre).sum()
     return float(between / total)
 
 
-def thickness_task(tag):
-    """Thickness test on every structure: does PC1 follow the thickness or the GB?"""
+def thickness_task(tag, descriptor_type="soap", blocks=None, ace_scaling=None):
+    """Thickness test on every structure: does PC1 follow the thickness or the GB?
+
+    Vectors wider than WIDE (covariant SOAP: [C_edge | C_mid], 13,868 x 119k; ACE: 13,868 x 26k) stay
+    float32 and use randomized PCA (fixed seed); the shares of variance are still taken against the
+    total variance."""
     from scipy.stats import spearmanr
     from sklearn.decomposition import PCA
 
     started = time.time()
     rows, projections = [], {}
+    source = block_source(Variant("thickness", "thickness", "", descriptor_type=descriptor_type, blocks=blocks,
+                                  ace_scaling=ace_scaling))
     for vector, kind in (("global", "global"), ("interface r8 both", "interface")):
-        X, index = mc.load_all_vectors(tag, kind, 8.0, "both")
-        X = np.asarray(X, dtype=np.float64)
+        X, index = mc.load_all_vectors(tag, kind, 8.0, "both", **source)
+        wide = X.shape[1] > WIDE
+        X = np.asarray(X, dtype=np.float32 if wide else np.float64)
         subsets = [("all structures", np.isfinite(X).all(axis=1))]
         if kind == "interface":
             subsets.append(("radius within a quarter cell", subsets[0][1] & (index["Lx"].to_numpy() / 4.0 >= 8.0)))
@@ -376,8 +668,9 @@ def thickness_task(tag):
             Z = X[mask]
             thickness = index["thickness"].to_numpy()[mask]
             family = index["family"].to_numpy()[mask]
-            pca = PCA(n_components=2, svd_solver="full").fit(Z)
-            scores = pca.transform(Z)
+            pca = (PCA(n_components=2, svd_solver="randomized", random_state=0) if wide else
+                   PCA(n_components=2, svd_solver="full")).fit(Z)
+            scores = pca.transform(Z).astype(np.float64)
             if subset == "all structures":
                 key = kind
                 projections[f"{key}_pcs"] = np.full((len(X), 2), np.nan)
@@ -406,7 +699,7 @@ def knob_ranking(table):
     import pandas as pd
 
     rows = []
-    for knob in KNOBS:
+    for knob in ALL_KNOBS:
         part = table[table["knob"] == knob]
         if part.empty:
             continue
@@ -533,10 +826,12 @@ def draw_sensitivity(table):
     return plt, fig
 
 
-def plot_sensitivity(path, table):
+def plot_sensitivity(path, table, label=None):
     plt, fig = draw_sensitivity(table)
-    fig.suptitle("Change against the baseline (dashed line = no change: the reference against itself); "
-                 "weighting at r_cut 8/12 against the unweighted run at that r_cut", fontsize=9, color=MUTED, y=0.995)
+    title = "Change against the baseline (dashed line = no change: the reference against itself)"
+    if (table["knob"] == "weighting").any():
+        title += "; weighting at r_cut 8/12 against the unweighted run at that r_cut"
+    fig.suptitle(f"{label}: {title}" if label else title, fontsize=9, color=MUTED, y=0.995)
     fig.tight_layout()
     _save(fig, path)
     plt.close(fig)
@@ -638,9 +933,19 @@ def worker_pool(jobs):
     return ProcessPoolExecutor(max_workers=max(1, jobs), mp_context=multiprocessing.get_context("spawn"))
 
 
+LABELS = {"soap": "Standard SOAP", "covariant": "Covariant SOAP [C_edge | C_mid], lambda >= 1",
+          "ace": "ACE [Co mean | Ge mean], blocks nu1, nu2, nu3 even and odd, each divided by its pristine length"}
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-    parser.add_argument("--out-dir", type=Path, default=OUT_DIR)
+    parser.add_argument("--descriptor-type", default="soap", choices=DESCRIPTOR_TYPES,
+                        help="soap: standard SOAP (default); covariant: covariant SOAP, outputs in "
+                             "calculations/ML_dscribe/CoGe/covariant/descriptor_sensitivity; ace: invariant ACE, "
+                             "outputs in calculations/ML_ACE/CoGe/descriptor_sensitivity")
+    parser.add_argument("--out-dir", type=Path, default=None,
+                        help="default calculations/ML_dscribe/CoGe/<standard|covariant>/descriptor_sensitivity, or "
+                             "calculations/ML_ACE/CoGe/descriptor_sensitivity")
     parser.add_argument("--only", nargs="+", help="setting names to run (the reference is always included)")
     parser.add_argument("--seeds", type=int, default=len(SEEDS), help=f"seeds of the seed test (default {len(SEEDS)})")
     parser.add_argument("--no-embeddings", action="store_true", help="skip the seed test and the per-setting maps")
@@ -649,38 +954,52 @@ def main():
                         help="worker processes, one thread each (default: $SLURM_CPUS_PER_TASK, else 1)")
     parser.add_argument("--dry-run", action="store_true", help="list the settings and their folders, then stop")
     args = parser.parse_args()
+    if args.out_dir is None:
+        args.out_dir = mc.OUTPUT_ROOTS[args.descriptor_type] / STUDY
 
-    chosen = variants(args.only)
+    chosen = variants(args.only, args.descriptor_type)
     by_name = {v.name: v for v in chosen}
     if args.dry_run:
         for v in chosen:
-            folder = sc.run_dir("global" if v.kind == "global" else "both_interfaces", v.tag)
-            print(f"{v.name:28s} {v.tag:40s} baseline={v.baseline:12s} {'ok' if folder.is_dir() else 'MISSING'}")
+            print(f"{v.name:28s} {v.tag:40s} baseline={v.baseline:12s} {'ok' if v.folder().is_dir() else 'MISSING'}")
         return 0
-    missing = sorted({v.tag for v in chosen if not (sc.run_dir("both_interfaces", v.tag) / sc.INTERFACE_FILE).is_file()})
+    missing = sorted({v.tag for v in chosen if not v.vector_file().is_file()})
     if missing:
-        raise SystemExit(f"SOAP runs missing: {missing}; run descriptor_grid.py first")
+        raise SystemExit(f"descriptor runs missing: {missing}; run descriptor_grid.py first")
 
     started = time.time()
     seeds = SEEDS[:max(1, args.seeds)]
     reference = by_name["reference"]
-    with worker_pool(args.jobs) as pool:
-        thickness = None if args.no_thickness else pool.submit(thickness_task, reference.tag)
-        embedding_jobs = []
-        if not args.no_embeddings:
-            embedding_jobs = [pool.submit(embedding_task, reference, m, s) for m in METHODS for s in seeds]
-            embedding_jobs += [pool.submit(embedding_task, v, m, seeds[0]) for v in chosen if v.name != "reference"
-                               for m in METHODS]
-        variant_jobs = [pool.submit(variant_task, v, by_name[v.baseline], reference) for v in chosen]
-        results = [job.result() for job in variant_jobs]
-        print(f"[{time.time() - started:6.0f} s] {len(results)} settings compared", flush=True)
-        embeddings = [job.result() for job in embedding_jobs]
-        print(f"[{time.time() - started:6.0f} s] {len(embeddings)} t-SNE/UMAP maps", flush=True)
-        thickness_rows, thickness_pcs, thickness_seconds = thickness.result() if thickness else ([], {}, 0)
+    # Each variant's 1,112 vectors are read once into a node-local cache; every task reads them there.
+    cache = Path(tempfile.mkdtemp(prefix="descriptor_sensitivity_", dir=os.environ.get("TMPDIR")))
+    os.environ[CACHE_ENV] = str(cache)
+    try:
+        with worker_pool(args.jobs) as pool:
+            thickness = None if args.no_thickness else pool.submit(thickness_task, reference.tag, args.descriptor_type,
+                                                                   reference.blocks, reference.ace_scaling)
+            sources = {}
+            for v in chosen:
+                sources.setdefault(cache_key(v), v)
+            warmed = [job.result() for job in [pool.submit(warm_task, v) for v in sources.values()]]
+            print(f"[{time.time() - started:6.0f} s] {len(warmed)} vector sources cached in {cache}", flush=True)
+            embedding_jobs = []
+            if not args.no_embeddings:
+                embedding_jobs = [pool.submit(embedding_task, reference, m, s) for m in METHODS for s in seeds]
+                embedding_jobs += [pool.submit(embedding_task, v, m, seeds[0]) for v in chosen
+                                   if v.name != "reference" for m in METHODS]
+            variant_jobs = [pool.submit(variant_task, v, by_name[v.baseline], reference) for v in chosen]
+            results = [job.result() for job in variant_jobs]
+            print(f"[{time.time() - started:6.0f} s] {len(results)} settings compared", flush=True)
+            embeddings = [job.result() for job in embedding_jobs]
+            print(f"[{time.time() - started:6.0f} s] {len(embeddings)} t-SNE/UMAP maps", flush=True)
+            thickness_rows, thickness_pcs, thickness_seconds = thickness.result() if thickness else ([], {}, 0)
+        _, table_ref, _ = distinct_vectors(reference)
+    finally:
+        shutil.rmtree(cache, ignore_errors=True)
+        os.environ.pop(CACHE_ENV, None)
 
     import pandas as pd
 
-    _, table_ref, _ = mc.load_distinct(reference.tag, allow_undefined=True)
     families = table_ref["family"].to_numpy()
     grain_classes = table_ref["grain_class"].to_numpy()
     table = pd.DataFrame([row for row, _ in results])
@@ -711,20 +1030,31 @@ def main():
     np.savez(tmp, **arrays)
     os.replace(tmp, out / "maps.npz")
 
-    plot_sensitivity(out / "sensitivity.png", table)
+    label = LABELS[args.descriptor_type] if args.descriptor_type != "soap" else None
+    plot_sensitivity(out / "sensitivity.png", table, label)
     plot_pca_maps(out / "pca_maps.png", table["name"].tolist(), pca_maps, grain_classes)
     if not seed_rows.empty:
         plot_seeds(out / "seed_robustness.png", seed_rows)
 
     self_row = table[table["name"] == "reference"].iloc[0]
     summary = {
-        "pool": "1,112 distinct GBs at 8x (one family per structure class, as select_gbs.py)",
-        "reference": asdict(reference) | {"tag": reference.tag},
-        "settings": [asdict(v) | {"tag": v.tag} for v in chosen],
+        "descriptor_type": args.descriptor_type,
+        "vector": LABELS[args.descriptor_type] + (
+            "; the two interfaces joined, never averaged; bulk point = pristine whole-cell mean of the same blocks"
+            if args.descriptor_type == "covariant" else
+            "; bulk point = the pristine cell of the same setting, blocks and scaling"
+            if args.descriptor_type == "ace" else ""),
+        "pool": f"{len(families):,} distinct GBs at 8x (one family per structure class, as select_gbs.py)",
+        "reference": variant_record(reference),
+        "settings": [variant_record(v) for v in chosen],
         "n_picks": N_PICKS, "n_neighbours": N_NEIGHBOURS, "seeds": list(seeds),
+        "wide_vectors": {"threshold_features": WIDE,
+                         "handling": "distances, PCA, GFRE and t-SNE/UMAP input on narrow(X) (row-space basis, exact); "
+                                     "thickness test in float32 with randomized PCA (random_state 0)"},
         "sanity_reference_against_itself": {key: self_row[key] for key in SCORES},
         "knob_order_most_change_first": ranking["knob"].tolist() if not ranking.empty else [],
         "seconds": {"total": round(time.time() - started, 1), "thickness_test": thickness_seconds,
+                    "cache": {key: seconds for key, _, seconds in warmed},
                     "settings": {row["name"]: row["seconds"] for row, _ in results},
                     "embeddings": round(sum(e["seconds"] for e in embeddings), 1)},
         "run": mc.run_metadata()}

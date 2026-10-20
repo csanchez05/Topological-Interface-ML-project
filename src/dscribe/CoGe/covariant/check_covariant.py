@@ -44,7 +44,7 @@ import numpy as np
 import soap_common as sc
 from covariant_descriptor import BLOCKS, inversion_sign, make_calculator, per_atom_blocks, split_mean
 
-CENSUS = (sc.PROJECT_ROOT / "calculations" / "ML_dscribe" / "CoGe" / "rc6.0_n8_l6_s0.5"
+CENSUS = (sc.PROJECT_ROOT / "calculations" / "ML_dscribe" / "CoGe" / "standard" / "rc6.0_n8_l6_s0.5"
           / "interface_r8_both_t4" / "distinct_gbs.csv")
 
 

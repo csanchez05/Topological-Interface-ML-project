@@ -47,8 +47,8 @@ Sixth study (--study settings_grid). PCA, metric MDS, UMAP and diffusion maps fo
 pooled rows. PERMANOVA splits the map-to-map changes into representation, settings, their
 interaction and seed noise. The reference setting is an extra anchor, outside the split.
 
-Outputs, one folder per run: calculations/ML_dscribe/CoGe/representation_study/<phase>/ or
-calculations/ML_dscribe/CoGe/settings_grid/
+Outputs, one folder per run: calculations/ML_dscribe/CoGe/comparison/representation_study/<phase>/ or
+calculations/ML_dscribe/CoGe/comparison/settings_grid/
   results.csv    tidy long table: study, phase, kind, method, subset, representation, variable,
                  value, sd, main, noise_floor, floor_median, input_change, sensitivity, significant,
                  factor, p_value, n
@@ -72,8 +72,8 @@ import ml_common as mc
 from descriptor_sensitivity import THREAD_VARIABLES, thickness_share
 from ml_common import sc
 
-OUT_DIR = mc.OUTPUT_ROOT / "representation_study"
-GRID_DIR = mc.OUTPUT_ROOT / "settings_grid"
+OUT_DIR = mc.COMPARISON_ROOT / "representation_study"
+GRID_DIR = mc.COMPARISON_ROOT / "settings_grid"
 SKETCHMAP = mc.PROJECT_ROOT / "src" / "third_party" / "sketchmap" / "bin" / "dimred"
 REPRESENTATIONS = ("A", "B", "C", "D")
 CHECK = "C0"

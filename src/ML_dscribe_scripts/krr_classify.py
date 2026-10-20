@@ -11,6 +11,12 @@ Testing is by grouped cross-validation, done twice:
   family    the guide's rule: no family is split between training and testing
   distinct  stricter: families whose vectors coincide (the same GB built more
             than once) also stay together, so no test vector was seen in training
+  census    with --census-grouping, a third time: as distinct, and the families of one
+            structure class of the standard-SOAP census (ml_common.CENSUS: the same
+            cell, possibly turned) also stay together. Covariant SOAP tells turned
+            copies apart, so its "distinct" folds can hold one copy in training and
+            another in testing; "census" is then the fair score (for standard SOAP the
+            two groupings are the same).
 
 The kernel width, the ridge strength and the feature scaling are chosen by a
 second cross-validation inside each training set; the test fold plays no part.
@@ -39,7 +45,7 @@ pooled data set also per plane.
 --descriptor-type ace uses the ACE vectors (src/ACE/CoGe) instead of SOAP and writes into
 calculations/ML_ACE/CoGe/ instead of calculations/ML_dscribe/CoGe/.
 
-Outputs, in calculations/ML_dscribe/CoGe/<descriptor tag>/<vector tag>/ (a folder that
+Outputs, in calculations/ML_dscribe/CoGe/standard/<descriptor tag>/<vector tag>/ (a folder that
 already holds krr_summary.csv is refused unless --overwrite is given):
   krr_summary.csv         one row per data set, label and grouping
   krr_by_plane.csv        grain class and handedness scored on each plane separately
@@ -49,7 +55,7 @@ already holds krr_summary.csv is refused unless --overwrite is given):
   krr_confused_pairs.csv  pairs of labels the model mixes up, most mixed first
   krr_summary.json        settings and the hyperparameters chosen in each fold
   krr_confusion_*.png     confusion matrices for plane and grain class, "distinct" grouping
-                          (skip with --no-plots)
+                          ("census" with --census-grouping; skip with --no-plots)
 """
 import argparse
 import os
@@ -169,6 +175,18 @@ def group_folds(groups, n_splits, seed):
         if np.intersect1d(groups[train], groups[test]).size:
             raise RuntimeError("a group was split between training and testing")
     return folds
+
+
+def census_groups(family, duplicate, census_path=None):
+    """'census' groups: the distinct groups, merged so that no structure class of the census is split.
+
+    family: one family name per row; duplicate: the distinct group of each row. Families the
+    census does not list keep their distinct group."""
+    import pandas as pd
+
+    census = pd.read_csv(census_path or mc.CENSUS, dtype={"plane": str}).set_index("family")["structure_class"]
+    classes = pd.factorize(pd.Series([census.get(f, f"not in census: {f}") for f in family]))[0]
+    return mc.family_groups(np.asarray(duplicate), classes)
 
 
 def label_ceiling(codes, groups):
@@ -507,6 +525,9 @@ def main():
                              f"{' '.join(geometry_labels.TARGETS)}); writes krr_regression.csv")
     parser.add_argument("--labels", type=Path, default=geometry_labels.OUT_DIR / geometry_labels.CSV_NAME,
                         help="geometry_labels.csv for --regression")
+    parser.add_argument("--census-grouping", action="store_true",
+                        help="also score with the 'census' grouping (structure classes of the standard-SOAP census "
+                             "kept in one fold); needed for descriptors that tell turned copies apart (covariant SOAP)")
     parser.add_argument("--overwrite", action="store_true",
                         help="write into a folder that already holds krr_summary.csv")
     args = parser.parse_args()
@@ -539,11 +560,16 @@ def main():
     family_group = pd.factorize(family)[0]
     # "distinct" groups: coinciding vectors stay together, and so do all thicknesses of one family.
     duplicate = mc.family_groups(family_group, mc.coincidence_groups(mc.relative_distances(X), args.tol))
+    groupings = [("family", family_group), ("distinct", duplicate)]
+    if args.census_grouping:
+        groupings.append(("census", census_groups(family, duplicate)))
+    headline = groupings[-1][0]  # the strictest grouping: its confusion matrices are drawn
     n_families = int(family_group.max()) + 1
     which = "all thicknesses pooled" if args.thickness == "all" else f"{args.thickness}x"
+    census_note = f", {len(set(groupings[-1][1].tolist()))} census groups" if args.census_grouping else ""
     print(f"{len(family)} structures in {n_families} families ({which}), {len(set(duplicate.tolist()))} distinct GBs "
-          f"(tolerance {args.tol:g}), vector {mc.vector_tag(args.kind, args.radius, args.planes, args.thickness)}",
-          flush=True)
+          f"(tolerance {args.tol:g}){census_note}, vector "
+          f"{mc.vector_tag(args.kind, args.radius, args.planes, args.thickness)}", flush=True)
 
     pool = None
     if args.jobs > 1:
@@ -567,7 +593,7 @@ def main():
         classes = {name: sorted(labels[name].iloc[rows].unique()) for name in names}
         targets = {name: np.array([classes[name].index(v) for v in labels[name].iloc[rows]]) for name in names}
         prepared[dataset] = (rows, names, classes, targets)
-        for grouping, groups in (("family", family_group[rows]), ("distinct", duplicate[rows])):
+        for grouping, groups in ((name, values[rows]) for name, values in groupings):
             pending[dataset, grouping] = start_nested_cv(X[rows], targets, groups, args.folds, args.inner_folds,
                                                          args.gammas, args.alphas, args.scales, args.seed, pool)
             if regression_targets is not None:
@@ -588,7 +614,7 @@ def main():
         # A structure has a "coinciding partner" when another family shares its distinct group.
         families_per_group = np.bincount(np.unique(np.stack([duplicate, family_group]), axis=1)[0])
         size_of_group = families_per_group[duplicate[rows]]
-        for grouping, groups in (("family", family_group[rows]), ("distinct", duplicate[rows])):
+        for grouping, groups in ((name, values[rows]) for name, values in groupings):
             print(f"  {dataset}, grouped by {grouping}: {len(rows)} structures, {len(set(groups.tolist()))} groups", flush=True)
             predictions, fold, chosen = pending.pop((dataset, grouping))(progress)
             chosen_all[f"{dataset}/{grouping}"] = chosen
@@ -643,14 +669,15 @@ def main():
                                               "a_called_b": table.get((a, b), 0), "b_called_a": table.get((b, a), 0),
                                               "n_a": int(counts[a]), "n_b": int(counts[b]),
                                               "share_mixed": round(mixed / (counts[a] + counts[b]), 4)})
-                if not args.no_plots and grouping == "distinct" and name in ("plane", "grain_class"):
+                if not args.no_plots and grouping == headline and name in ("plane", "grain_class"):
                     matrix = pd.DataFrame(0, index=classes[name], columns=classes[name])
                     for (t, p), count in table.items():
                         matrix.iloc[t, p] = count
                     plot_confusion(out / f"krr_confusion_{dataset}_{name}_{grouping}.png", matrix,
                                    f"KRR: {name.replace('_', ' ')} from the GB vector",
                                    f"{'all planes' if dataset == 'all' else dataset + ' plane'}, {len(rows)} GBs, "
-                                   f"coinciding vectors kept in one fold\n"
+                                   f"{'copies of one structure (census)' if grouping == 'census' else 'coinciding vectors'}"
+                                   f" kept in one fold\n"
                                    f"accuracy {correct['krr'].mean():.1%} (baseline "
                                    f"{correct['baseline'].mean():.1%}); number = GBs, colour = share of each row")
             if ("regression", dataset, grouping) in pending:
@@ -697,6 +724,8 @@ def main():
         "vector": mc.vector_settings(args),
         "n_families": n_families, "n_structures": len(family),
         "n_distinct_vectors": int(len(set(duplicate.tolist()))), "tolerance": args.tol,
+        "n_census_groups": int(len(set(groupings[-1][1].tolist()))) if args.census_grouping else None,
+        "headline_grouping": headline,
         "method": {
             "model": "sklearn KernelRidge on class-indicator columns (centred on the training mean), "
                      "prediction = class with the largest value",
@@ -705,7 +734,10 @@ def main():
             "comparison": f"k nearest neighbours, k in {list(NEIGHBOURS)}",
             "outer_folds": args.folds, "inner_folds": args.inner_folds, "seed": args.seed,
             "groupings": {"family": "no family split between training and testing",
-                          "distinct": "families with coinciding vectors also kept together"},
+                          "distinct": "families with coinciding vectors also kept together",
+                          **({"census": "as distinct, and the families of one structure class of "
+                                        f"{sc.relative_path(mc.CENSUS)} also kept together"}
+                             if args.census_grouping else {})},
         },
         "results": summary_rows,
         "per_plane": {"rows": "krr_by_plane.csv", "mirror_classes": {p: {c: sorted(m) for c, m in by.items()}

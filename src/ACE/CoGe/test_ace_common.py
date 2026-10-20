@@ -109,6 +109,32 @@ class Symmetry(unittest.TestCase):
         self.assertEqual(list(blocks), ["nu1", "nu2"])
         np.testing.assert_array_equal(blocks["nu2"], self.reference["nu2"])
 
+    def _symmetric_and_different(self, settings):
+        """The setting keeps the rotation and inversion rules and gives other numbers than SETTINGS."""
+        calculator = ac.Calculator(settings)
+        reference = calculator.per_atom(self.atoms)
+        rotation = random_rotation(5)
+        turned = self.atoms.copy()
+        turned.set_cell(self.atoms.cell.array @ rotation.T, scale_atoms=False)
+        turned.positions = self.atoms.positions @ rotation.T
+        inverted = self.atoms.copy()
+        inverted.positions = -self.atoms.positions
+        inverted.wrap()
+        rotated, mirrored = calculator.per_atom(turned), calculator.per_atom(inverted)
+        for name, (_, sigma) in ac.BLOCKS.items():
+            self.assertLess(relative(rotated[name], reference[name]), 1e-8, name)
+            self.assertLess(relative(mirrored[name], sigma * reference[name]), 1e-8, name)
+            self.assertGreater(relative(reference[name], self.reference[name]), 1e-3, name)
+        return reference
+
+    def test_pow_weighting(self):
+        self._symmetric_and_different({**SETTINGS, "weighting": ac.pow_weighting(3.0, 4)})
+
+    def test_dirac_density_is_refused(self):
+        """featomic 0.6.7 cannot expand a Dirac density on the GTO basis; the error says so up front."""
+        with self.assertRaisesRegex(ValueError, "density dirac is not available"):
+            ac.Calculator({**SETTINGS, "density": "dirac", "sigma": None})
+
 
 class Tags(unittest.TestCase):
     def settings(self, **changes):
@@ -129,6 +155,21 @@ class Tags(unittest.TestCase):
     def test_blocks_for(self):
         self.assertEqual(ac.blocks_for(self.settings()), ["nu1", "nu2", "nu3_even", "nu3_odd"])
         self.assertEqual(ac.blocks_for(self.settings(nu_max=2)), ["nu1", "nu2"])
+
+    def test_weighting(self):
+        weighted = self.settings(weighting=ac.pow_weighting(3.0, 4))
+        self.assertEqual(ac.ace_tag(weighted), "rc6.0_n8_l6_s0.5_wpow-r3-c1-d1-m4_nu3-n4-l4")
+        self.assertEqual(ac.ace_tag({**weighted, "density": "dirac", "sigma": None}),
+                         "rc6.0_n8_l6_dirac_wpow-r3-c1-d1-m4_nu3-n4-l4")
+        # The weighting has the same suffix as the SOAP study's pow runs.
+        soap = sc.soap_tag({"r_cut": 6.0, "n_max": 8, "l_max": 6, "sigma": 0.5, "rbf": "gto",
+                            "weighting": {"function": "pow", "r0": 3.0, "c": 1.0, "d": 1.0, "m": 4.0}})
+        self.assertTrue(ac.ace_tag(weighted).startswith(soap + "_"))
+        self.assertEqual(ac.hypers(weighted, 8, 6)["density"]["scaling"],
+                         {"type": "Willatt2018", "exponent": 4, "rate": 1.0, "scale": 3.0})
+        self.assertNotIn("scaling", ac.hypers(self.settings(), 8, 6)["density"])
+        with self.assertRaises(ValueError):
+            ac.hypers(self.settings(weighting={"function": "poly", "r0": 6.0, "c": 1.0, "m": 2.0}), 8, 6)
 
     def test_dirac_hypers(self):
         self.assertEqual(ac.hypers(self.settings(density="dirac"), 4, 4)["density"], {"type": "DiracDelta"})
@@ -199,6 +240,15 @@ class RoundTrip(unittest.TestCase):
         self.assertEqual(bulk.shape, (3, start))
         with self.assertRaises(ValueError):
             ac.assemble(self.glob, scaling="unit")
+
+    def test_vanishing_block_refused(self):
+        # nu3_odd of an l3 = 2 run is zero in pristine bulk by site symmetry (length ~3e-19).
+        arrays = {"nu2": np.ones((2, 4)), "nu3_odd": np.full((2, 4), 0.5)}
+        with self.assertRaisesRegex(ValueError, "vanishes in pristine bulk"):
+            ac.assemble(arrays, norms={"nu2": 2.0, "nu3_odd": 3e-19})
+        X = ac.assemble(arrays, norms={"nu2": 2.0, "nu3_odd": 0.25})
+        np.testing.assert_array_equal(X, np.hstack([np.full((2, 4), 0.5), np.full((2, 4), 2.0)]))
+        np.testing.assert_array_equal(ac.assemble(arrays, scaling="none"), np.hstack([arrays["nu2"], arrays["nu3_odd"]]))
 
     def test_stored_blocks(self):
         with np.load(self.interface_dir / ac.INTERFACE_FILE) as data:

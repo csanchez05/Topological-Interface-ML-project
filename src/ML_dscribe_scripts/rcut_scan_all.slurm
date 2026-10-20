@@ -9,7 +9,7 @@
 #SBATCH --exclusive
 #SBATCH --time=2-00:00:00
 #SBATCH --chdir=/home/calvinsanchez/ML_Interface_Project
-#SBATCH --output=/home/calvinsanchez/ML_Interface_Project/calculations/ML_dscribe/CoGe/rcut_scan_all/logs/driver-%j.out
+#SBATCH --output=/home/calvinsanchez/ML_Interface_Project/calculations/ML_dscribe/CoGe/standard/rcut_scan_all/logs/driver-%j.out
 #
 # r_cut scan on every structure (4x-12x), one whole node. rcut_scan_all.py keeps all
 # CPUs of the allocation busy with the SOAP runs and the separate analyses.

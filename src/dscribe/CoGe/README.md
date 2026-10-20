@@ -15,7 +15,9 @@ table**, not one file per structure. Environment: `source src/mlenv/env.sh`.
 | `gb/check_gb.py` | 1.3 | Checks on the GB output |
 | `run_soap.slurm` | – | Runs the four scripts in order on a compute node |
 | `test_soap_common.py` | – | Unit tests |
-| `covariant/covariant_descriptor.py` | – | Covariant (λ-) SOAP with featomic, λ = 0, 1, 2 (`--blocks` chooses); fifth and sixth descriptor studies, kept for Stage 3 |
+| `covariant/covariant_descriptor.py` | 1.3 | Covariant (λ-) SOAP with featomic, λ = 0, 1, 2 (`--blocks` chooses); the primary descriptor since 2026-10-13 (`descriptor_grid.py --study covariant`), also the fifth and sixth descriptor studies |
+| `covariant/covariant_common.py` | 1.4–2 | Read-only loaders of the covariant runs for the ML scripts (`ml_common` imports it for `--descriptor-type covariant`): the GB vector [C_edge \| C_mid] of the λ ≥ 1 blocks (edge and mid are never averaged), one interface or the whole cell, and the bulk vectors in the same layout; no thread pinning |
+| `covariant/test_covariant_common.py` | – | Unit tests of the loaders on a synthetic covariant run (layout, blocks, bulk; block order equal to `covariant_descriptor.BLOCKS`) |
 | `covariant/check_covariant.py` | – | Rotation, inversion, bulk and thickness checks of the covariant output; `--compare-with` checks a new run against an old one |
 | `covariant/test_covariant.py` | – | Unit tests (rotation and inversion of a small random cell, λ = 1 and 2; the Gram-matrix shortcut) |
 | `gb/global_descriptor.py` | – | Legacy reference script (old paths, max-pooling). Not used. |

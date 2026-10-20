@@ -178,8 +178,8 @@ and must not be reused:
 
 | Stage | Content | Status |
 |---|---|---|
-| 1 | 1.1 SOAP of pristine + 1,541 bulk cells · 1.2 bulk invariance check · 1.3 GB descriptors (13,868) · 1.4 KRR GB vector → plane and operation · 1.5 coinciding vectors / distinct GBs (then raise n_max, l_max) · r_cut scan 4–12 Å | Done at r_cut 6: plane 0.999, grain class 0.49 (baseline 0.19), 1,112 distinct GBs. Scan on all thicknesses: same conclusions. Code: `src/dscribe/CoGe/`, `src/ML_dscribe_scripts/` |
-| 2 | KRR GB vector → GB energy, from VASP relaxations of FPS-chosen GBs; E_GB = (E_cell − n·ε_bulk) / (2A), two interfaces per cell | Selection done (`select_gbs.py`): six lists of 30 GBs (FPS and median, each in PCA, t-SNE and UMAP), in `plots/CoGe/dim-reduction/SOAP/`. Their union, 162 8x POSCARs, is `results/dscribe/total_sample_list.csv`. Overlap limit 1.8 Å (2026-10-06) leaves 13 of the 66 [100], 1 of 63 [110] and 1 of 33 [111] cells. [100] refill (2026-10-07, `select_gbs.py --planes 100 --min-pair 1.8`): 63 of the 70 clean distinct [100] GBs, in `plots/CoGe/dim-reduction/SOAP/plane100_dmin1.8/`. VASP: [100] ENCUT/k sweep on 4 GBs, unrelaxed: v0.1.0 (2026-10-05) failed (sloshing; divergence at 0.77 Å), v0.2.0 with damped mixing (2026-10-06) awaits its first full test; production not started. |
+| 1 | 1.1 SOAP of pristine + 1,541 bulk cells · 1.2 bulk invariance check · 1.3 GB descriptors (13,868) · 1.4 KRR GB vector → plane and operation · 1.5 coinciding vectors / distinct GBs (then raise n_max, l_max) · r_cut scan 4–12 Å | Done at r_cut 6: plane 0.999, grain class 0.49 (baseline 0.19), 1,112 distinct GBs. Scan on all thicknesses: same conclusions. Code: `src/dscribe/CoGe/`, `src/ML_dscribe_scripts/`. ACE comparison (2026-10-13): featomic code in `src/ACE/CoGe/` (blocks ν1, ν2 = the SOAP power spectrum, ν3 even and odd; the odd block flips sign under inversion, so it sees handedness), full run done (jobs 12969, 12971; `calculations/descriptors/ACE/`, `calculations/ML_ACE/CoGe/`, both READMEs): odd-block sign = handedness label on all 1,541 bulk cells; 1,170 distinct GBs (the 1,112 + 56 mirror-image GBs that SOAP and the census merge, + 2 rounding splits); KRR handedness 1.00 (SOAP 0.55), grain class 0.84 (SOAP 0.49; folds still split mirror pairs); Stage 2 ACE maps in `plots/CoGe/dim-reduction/ACE/`, PC1 = proper vs improper grain class. The ML scripts take `--descriptor-type ace`. Comparison write-up (`results/ACE_vs_SOAP/`) not started |
+| 2 | KRR GB vector → GB energy, from VASP relaxations of FPS-chosen GBs; E_GB = (E_cell − n·ε_bulk) / (2A), two interfaces per cell | Selection done (`select_gbs.py`): six lists of 30 GBs (FPS and median, each in PCA, t-SNE and UMAP), in `plots/CoGe/dim-reduction/SOAP/` (its `FPS/` and `median/` folders are missing from disk since about 2026-10-07, left missing by the user's choice; an exact copy, hashes as in `run.json`, is in `archive/reorganization_20261003/before_edit/plots/CoGe/dim-reduction/`). Their union, 162 8x POSCARs, is `results/dscribe/total_sample_list.csv`. Overlap limit 1.8 Å (2026-10-06) leaves 13 of the 66 [100], 1 of 63 [110] and 1 of 33 [111] cells. [100] refill (2026-10-07, `select_gbs.py --planes 100 --min-pair 1.8`): 63 of the 70 clean distinct [100] GBs, in `plots/CoGe/dim-reduction/SOAP/plane100_dmin1.8/`. VASP: [100] ENCUT/k sweep on 4 GBs, unrelaxed: v0.1.0 (2026-10-05) failed (sloshing; divergence at 0.77 Å), v0.2.0 with damped mixing (2026-10-06) awaits its first full test; production not started. |
 | 3 | KRR GB vector → vectorized SOC spin texture (PROCAR σx/σy/σz) | Not started |
 | 4 | PCA/UMAP anomaly map, bulk at the origin; isolated GBs are candidates | Not started |
 
@@ -197,11 +197,14 @@ calculations/
   descriptors/dscribe/{standard,covariant}/{global,both_interfaces}/<tag>/   SOAP descriptors (Stage 1),
                                            files only, one folder per setting (README there)
   ML_dscribe/CoGe/                         labels/, <tag>/<vector tag>/, rcut_scan_all/, rcut_scan_8x/, dim-reduction/
+                                           (labels/ and the 1,112-GB census are shared with ACE)
+  descriptors/ACE/standard/{global,both_interfaces}/<tag>/   ACE descriptors (featomic), files only (README there)
+  ML_ACE/CoGe/                             <tag>/<vector tag>/, dim-reduction/: ACE outputs of the shared ML scripts
 structures/CoGeGrainBoundaries/CoGe_<plane>_GBs/   read-only source
   Bulk/symNNNNN/POSCAR,  Interface/symNNNNN/<4..12>x/POSCAR,  Interface/Information.txt
 src/        code only, one README per folder; drivers never live in calculations/
 results/    final tables and records only; every folder explained in results/README.md
-plots/      figures
+plots/      figures; Stage 2 maps in plots/CoGe/dim-reduction/SOAP/ and plots/CoGe/dim-reduction/ACE/ (since 2026-10-13)
 notes/      campaign notes, <topic>_YYYYMMDD.md
 archive/    superseded material at the same relative path (archive/README.md); nothing reads from it
 ```
@@ -299,8 +302,8 @@ in each stage folder and `archive/reorganization_20261002/stages.tsv`.
   `--verify-only`, and `PROJECT_ROOT = Path(__file__).resolve().parents[N]`. Paths are project-relative.
 - Tests use `unittest` on synthetic data, sit next to the code (`test_*.py`), and run with
   `python3 -B -m unittest discover -s <dir> -p 'test_*.py'`.
-- No `__init__.py` under `src/dscribe/` (it would shadow the `dscribe` package). Nothing imports
-  from `archive/`.
+- No `__init__.py` under `src/dscribe/` (it would shadow the `dscribe` package) or `src/ACE/`. Nothing
+  imports from `archive/`.
 - Every `src/` folder has a README; update it in the same change.
 
 ## 9. Where to look
@@ -309,5 +312,6 @@ in each stage folder and `archive/reorganization_20261002/stages.tsv`.
 - `notes/scf_reproducibility.md`, `notes/scf_110_111_20260914.md`, `notes/dos_bands_reproducibility.md`:
   the full VASP protocols and resource history.
 - `src/dscribe/CoGe/README.md`, `src/ML_dscribe_scripts/README.md`: Stage 1 and 2 code, options, results.
+- `src/ACE/CoGe/README.md`: the ACE descriptors (ACE vs SOAP, blocks, smoke test).
 - `src/dft_plots/README.md`: plotting.
 - `results/README.md`, `archive/README.md`: what each record or archived item is.

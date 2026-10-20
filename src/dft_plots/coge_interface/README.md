@@ -6,6 +6,8 @@ Analysis of the CoGe grain-boundary (GB) cells. Uses the `src/dft_plots/.venv` P
 | --- | --- |
 | `overlap_survey.py` | Closest pair of atoms in every GB POSCAR of the catalogue (13,869 files, all planes and thicknesses), and the number of pairs below each threshold. Writes `results/CoGe_interface/overlap_survey.tsv` and prints, per plane and threshold, how many GB families clear it in the catalogue and in the Stage 2 list |
 | `test_overlap_survey.py` | Unit tests on synthetic cells |
+| `scf_trials_plot.py` | One figure for the 2026-10-13 SCF trials (`src/vasp_inputs/scf_trials.py`): rms(c) and total moment per SCF step against wall-clock hours, one line per mixing variant, sym00177 and sym00190 side by side, the failed v0.2.0 run in gray. Writes `<records>/trace.png`; `--smoke DIR` draws synthetic records into a figure titled SYNTHETIC |
+| `test_scf_trials_plot.py` | Unit tests on synthetic trial records, plus one synthetic smoke render |
 
 ## Overlap limit
 
@@ -37,6 +39,13 @@ edge, 2.31 Å, where the per-axis minimum image is exact), `--workers` (file-rea
 costs ~0.09 s of file-system latency), `--out`, `--overwrite`. A full run takes about 7 minutes.
 
 Tests: `src/dft_plots/.venv/bin/python -B -m unittest discover -s src/dft_plots/coge_interface -p 'test_*.py'`.
+
+SCF-trial figure (light; a few seconds):
+
+```bash
+src/dft_plots/.venv/bin/python -B src/dft_plots/coge_interface/scf_trials_plot.py \
+    --records results/CoGe_interface/100/convergence_8x/scf_trials_20261013 [--overwrite]
+```
 
 ## TSV columns
 

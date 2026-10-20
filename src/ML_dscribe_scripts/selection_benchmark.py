@@ -49,7 +49,7 @@ Descriptor comparison: fps and random curves for every setting of
 descriptor_sensitivity.py. The KRR settings were tuned on the reference, so the 1-NN
 curves are the fairer comparison between descriptors.
 
-Outputs in calculations/ML_dscribe/CoGe/selection_benchmark_v2/ (refused if summary.json is
+Outputs in calculations/ML_dscribe/CoGe/standard/selection_benchmark_v2/ (refused if summary.json is
 there, unless --overwrite; v1 with 1,112 GBs and no geometry labels is selection_benchmark/):
   learning_curves.csv   descriptor x split x strategy x draw x n x label x model: accuracy
                         (class labels) or r2 and mae (geometry labels)
@@ -60,8 +60,23 @@ there, unless --overwrite; v1 with 1,112 GBs and no geometry labels is selection
   maps.npz              select_gbs.py's PCA, t-SNE and UMAP maps of the pool GBs (last row: bulk),
                         with their families and labels
   summary.json, learning_curves.png, coverage.png, descriptor_efficiency.png
+
+--descriptor-type covariant (since 2026-10-13): the same benchmark on covariant SOAP ([C_edge | C_mid],
+lambda >= 1; descriptor_sensitivity.py --descriptor-type covariant lists its settings), outputs in
+calculations/ML_dscribe/CoGe/covariant/selection_benchmark/, existing lists from
+plots/CoGe/dim-reduction/SOAP/covariant/{FPS,median}/. --krr-settings <krr_summary.json> takes the KRR
+settings of each class label from a krr_classify.py run (its most common nested-CV choice over the
+pooled folds with coinciding vectors kept together); without it the standard-SOAP choices above are
+used, and summary.json says which.
+
+--descriptor-type ace (since 2026-10-13): the same benchmark on invariant ACE (every block, each divided
+by its pristine length; descriptor_sensitivity.py --descriptor-type ace lists its settings), outputs in
+calculations/ML_ACE/CoGe/selection_benchmark/, existing lists from plots/CoGe/dim-reduction/ACE/{FPS,median}/
+(select_gbs.py --descriptor-type ace). Pass --krr-settings with the ACE krr_classify.py run
+(calculations/ML_ACE/CoGe/<tag>/interface_r8_both_t4_no_boundary/).
 """
 import argparse
+import json
 import os
 import sys
 import time
@@ -76,6 +91,8 @@ import ml_common as mc
 from ml_common import sc
 
 OUT_DIR = mc.OUTPUT_ROOT / "selection_benchmark_v2"
+OUT_DIRS = {"soap": OUT_DIR, "covariant": mc.OUTPUT_ROOTS["covariant"] / "selection_benchmark",
+            "ace": mc.OUTPUT_ROOTS["ace"] / "selection_benchmark"}
 EXISTING_DIR = mc.plot_root("soap")
 SIZES = (5, 10, 15, 20, 30, 40, 60, 80, 100)
 N_SPLITS = 10
@@ -93,6 +110,28 @@ REGRESSION_SCALES, REGRESSION_GAMMAS, REGRESSION_ALPHAS = ("standard", "none"), 
 FULL_SPACE = ("random", "stratified", "fps", "kmeans", "gp_variance")
 MAP_RULES = tuple(f"map_{rule}_{method}" for method in ("pca", "tsne", "umap") for rule in ("fps", "kmeans"))
 RANDOM_STRATEGIES = ("random", "stratified")
+
+
+def krr_settings_from(path):
+    """KRR settings per class label from a krr_classify.py run (krr_summary.json, or its folder).
+
+    The most common nested-CV choice (scale, gamma x median, alpha) over the pooled folds that keep
+    copies together ("all/census", else "all/distinct", else the first grouping stored); ties go to the
+    choice met first. Labels the run lacks keep KRR_SETTINGS."""
+    from collections import Counter
+
+    path = Path(path)
+    if path.is_dir():
+        path = path / "krr_summary.json"
+    chosen = json.loads(path.read_text())["hyperparameters_chosen_per_fold"]
+    folds = chosen.get("all/census") or chosen.get("all/distinct") or next(iter(chosen.values()))
+    out = dict(KRR_SETTINGS)
+    for label in KRR_SETTINGS:
+        choices = [(f["krr"][label]["scale"], float(f["krr"][label]["gamma_times_median"]), float(f["krr"][label]["alpha"]))
+                   for f in folds if label in f.get("krr", {})]
+        if choices:
+            out[label] = Counter(choices).most_common(1)[0][0]
+    return out
 
 
 # --------------------------------------------------------------------------- pieces
@@ -161,11 +200,14 @@ def nested(order, sizes):
 
 
 class Spaces:
-    """Squared distances between all rows, after scaling fitted on the pool rows (no labels)."""
+    """Squared distances between all rows, after scaling fitted on the pool rows (no labels).
 
-    def __init__(self, X, pool):
+    krr_settings: {label: (scale, gamma, alpha)} for the class labels (default KRR_SETTINGS)."""
+
+    def __init__(self, X, pool, krr_settings=None):
         import krr_classify as krr
 
+        self.krr_settings = krr_settings or KRR_SETTINGS
         self.D2, self.width = {}, {}
         for scale in ("none", "standard"):
             D2 = krr.scaled_distances(X, pool, scale)
@@ -179,7 +221,7 @@ def predict(spaces, label, model, codes, picks, test, n_classes):
     if model == "1nn":
         D2 = spaces.D2["none"][np.ix_(test, picks)]
         return codes[picks][np.argmin(D2, axis=1)]
-    scale, gamma, alpha = KRR_SETTINGS[label]
+    scale, gamma, alpha = spaces.krr_settings[label]
     D2, width = spaces.D2[scale], spaces.width[scale]
     present = np.zeros(n_classes, dtype=bool)
     present[np.unique(codes[picks])] = True
@@ -354,30 +396,32 @@ def strategy_picks(X, bulk, pool, groups, families, maps, sizes, kernel, split_s
     return out
 
 
-def gp_kernel(X, pool):
-    """The grain-class KRR kernel: standardised features (pool), gamma 10, median squared distance."""
+def gp_kernel(X, pool, krr_settings=None):
+    """The grain-class KRR kernel: standardised features (pool), gamma 10 (or krr_settings'), median
+    squared distance. The features stay standardised whatever scaling krr_settings names."""
     import krr_classify as krr
 
     mean, spread = X[pool].mean(axis=0), X[pool].std(axis=0)
     Z = (X - mean) / np.where(spread > 0, spread, 1.0)
-    scale, gamma, _ = KRR_SETTINGS["grain_class"]
+    scale, gamma, _ = (krr_settings or KRR_SETTINGS)["grain_class"]
     width = krr.median_squared_distance(krr.squared_distances(Z), pool)
     return Z, gamma, width
 
 
 # --------------------------------------------------------------------------- tasks (worker processes)
 
-def reference_split_task(split, pool, test, maps, sizes, n_draws, keep=False, geometry=True):
+def reference_split_task(split, pool, test, maps, sizes, n_draws, keep=False, geometry=True, reference=None,
+                         krr_settings=None):
     """Every strategy on one split of the reference vector: learning curves and coverage."""
     from scipy.spatial.distance import pdist, squareform
 
     started = time.time()
-    X, table, bulk = load_pool(ds.variants(["reference"])[0], keep, geometry)
+    X, table, bulk = load_pool(reference or ds.variants(["reference"])[0], keep, geometry)
     families, groups, codes = table["family"].to_numpy(), gb_groups(table), label_codes(table)
-    distances = pdist(X)
+    distances = pdist(ds.narrow(X))
     D, median_distance = squareform(distances), float(np.median(distances))
-    spaces = Spaces(X, pool)
-    picks = strategy_picks(X, bulk, pool, groups, families, maps, sizes, gp_kernel(X, pool), split,
+    spaces = Spaces(X, pool, krr_settings)
+    picks = strategy_picks(X, bulk, pool, groups, families, maps, sizes, gp_kernel(X, pool, krr_settings), split,
                            FULL_SPACE + MAP_RULES, n_draws)
     curves, coverage = [], []
     for strategy, draws in picks.items():
@@ -389,7 +433,7 @@ def reference_split_task(split, pool, test, maps, sizes, n_draws, keep=False, ge
     return curves, coverage, round(time.time() - started, 1)
 
 
-def variant_task(variant, splits, sizes, n_draws, keep=False, geometry=True):
+def variant_task(variant, splits, sizes, n_draws, keep=False, geometry=True, krr_settings=None):
     """fps and random learning curves of one descriptor setting over every split."""
     started = time.time()
     X, table, bulk = load_pool(variant, keep, geometry)
@@ -398,7 +442,7 @@ def variant_task(variant, splits, sizes, n_draws, keep=False, geometry=True):
     curves = []
     for split, (pool, test) in enumerate(splits):
         pool, test = pool[defined[pool]], test[defined[test]]
-        spaces = Spaces(X, pool)
+        spaces = Spaces(X, pool, krr_settings)
         picks = strategy_picks(X, bulk, pool, groups, families, None, sizes, None, split, ("random", "fps"), n_draws)
         for strategy, draws in picks.items():
             for draw, by_size in draws:
@@ -412,28 +456,42 @@ def read_list(path):
     return [line.strip() for line in Path(path).read_text().splitlines() if line.strip()]
 
 
-def existing_task(maps, n_draws, count=30, keep=False, geometry=True):
+def read_existing_lists(existing_dir, row_of_source):
+    """({list name: pool rows}, {list name: members outside the pool}) of the six lists in existing_dir.
+
+    A list may hold structures outside the pool (the NO_BOUNDARY families, which the pool drops by default;
+    the ACE PCA lists pick 111/sym00119). Those are left out of the rows and reported.
+    """
+    lists, outside = {}, {}
+    for folder in ("FPS", "median"):
+        for method in ("pca", "tsne", "umap"):
+            path = Path(existing_dir) / folder / f"{method}.txt"
+            if path.is_file():
+                members, name = read_list(path), f"existing {folder}/{method}.txt"
+                if any(s not in row_of_source for s in members):
+                    outside[name] = [s for s in members if s not in row_of_source]
+                lists[name] = np.array([row_of_source[s] for s in members if s in row_of_source])
+    return lists, outside
+
+
+def existing_task(maps, n_draws, count=30, keep=False, geometry=True, reference=None, krr_settings=None,
+                  existing_dir=None):
     """The six existing lists, their union, and `count` picks of every strategy from all GBs."""
     from scipy.spatial.distance import pdist, squareform
 
     started = time.time()
-    X, table, bulk = load_pool(ds.variants(["reference"])[0], keep, geometry)
+    X, table, bulk = load_pool(reference or ds.variants(["reference"])[0], keep, geometry)
     families, groups, codes = table["family"].to_numpy(), gb_groups(table), label_codes(table)
-    distances = pdist(X)
+    distances = pdist(ds.narrow(X))
     D, median_distance = squareform(distances), float(np.median(distances))
     everything = np.arange(len(X))
-    spaces = Spaces(X, everything)
+    spaces = Spaces(X, everything, krr_settings)
     row_of_source = {source: i for i, source in enumerate(table["source"])}
-    lists = {}
-    for folder, rule in (("FPS", "fps"), ("median", "kmeans")):
-        for method in ("pca", "tsne", "umap"):
-            path = EXISTING_DIR / folder / f"{method}.txt"
-            if path.is_file():
-                lists[f"existing {folder}/{method}.txt"] = np.array([row_of_source[s] for s in read_list(path)])
+    lists, outside = read_existing_lists(existing_dir or EXISTING_DIR, row_of_source)
     if lists:
         lists["existing union of the six"] = np.unique(np.concatenate(list(lists.values())))
-    picks = strategy_picks(X, bulk, everything, groups, families, maps, (count,), gp_kernel(X, everything), 999,
-                           FULL_SPACE + MAP_RULES, n_draws)
+    picks = strategy_picks(X, bulk, everything, groups, families, maps, (count,), gp_kernel(X, everything, krr_settings),
+                           999, FULL_SPACE + MAP_RULES, n_draws)
     entries = [(name, 0, rows) for name, rows in lists.items()]
     entries += [(f"strategy {s}", d, by_size[count]) for s, draws in picks.items() for d, by_size in draws]
     rows_out = []
@@ -442,6 +500,8 @@ def existing_task(maps, n_draws, count=30, keep=False, geometry=True):
     for name, draw, rows in entries:
         rest = np.setdiff1d(everything, rows)
         record = {"list": name, "draw": draw, "n": len(rows)} | coverage_scores(D, median_distance, groups, rows)
+        if name in outside:
+            record["left_out_outside_pool"] = "; ".join(outside[name])
         for row in score_picks(spaces, codes, rows, rest):
             for metric in ("accuracy", "balanced_accuracy", "r2", "mae"):
                 if metric in row:
@@ -453,14 +513,14 @@ def existing_task(maps, n_draws, count=30, keep=False, geometry=True):
                     record["same_as_existing_list"] = bool(
                         set(rows.tolist()) == set(lists[f"existing {folder}/{method}.txt"].tolist()))
         rows_out.append(record)
-    return rows_out, picked, round(time.time() - started, 1)
+    return rows_out, picked, round(time.time() - started, 1), outside
 
 
-def maps_task(keep=False):
+def maps_task(keep=False, reference=None):
     """select_gbs.py's three maps of the reference vector (all GBs + bulk, seed 42)."""
     import select_gbs
 
-    X, table, bulk = load_pool(ds.variants(["reference"])[0], keep, geometry=False)
+    X, table, bulk = load_pool(reference or ds.variants(["reference"])[0], keep, geometry=False)
     vectors = np.vstack([X, bulk])
     return {method: select_gbs.embed(vectors, method, MAP_SEED)[0] for method in ("pca", "tsne", "umap")}
 
@@ -642,7 +702,18 @@ def plot_descriptors(path, summary):
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-    parser.add_argument("--out-dir", type=Path, default=OUT_DIR)
+    parser.add_argument("--descriptor-type", default="soap", choices=tuple(OUT_DIRS),
+                        help="soap: standard SOAP (default); covariant: covariant SOAP ([C_edge | C_mid], lambda >= 1); "
+                             "ace: invariant ACE")
+    parser.add_argument("--out-dir", type=Path, default=None,
+                        help="default calculations/ML_dscribe/CoGe/standard/selection_benchmark_v2, "
+                             ".../covariant/selection_benchmark, or calculations/ML_ACE/CoGe/selection_benchmark")
+    parser.add_argument("--krr-settings", type=Path, default=None,
+                        help="krr_summary.json (or its folder) of a krr_classify.py run of the same descriptor: "
+                             "its most common KRR settings per class label (default: the standard-SOAP choices)")
+    parser.add_argument("--existing-dir", type=Path, default=None,
+                        help="folder with the existing FPS/ and median/ lists (default: the descriptor type's "
+                             "plots/CoGe/dim-reduction folder)")
     parser.add_argument("--only", nargs="+", help="descriptor settings for the comparison (default: all of "
                                                   "descriptor_sensitivity.py; the reference is always included)")
     parser.add_argument("--no-descriptors", action="store_true", help="reference vector only")
@@ -661,30 +732,52 @@ def main():
     import pandas as pd
 
     started = time.time()
+    if args.out_dir is None:
+        args.out_dir = OUT_DIRS[args.descriptor_type]
+    if args.existing_dir is None:
+        args.existing_dir = mc.plot_root(args.descriptor_type)
     if (args.out_dir / "summary.json").exists() and not args.overwrite:
         parser.error(f"{sc.relative_path(args.out_dir)} holds an earlier run; choose another --out-dir or pass --overwrite")
+    krr_settings = krr_settings_from(args.krr_settings) if args.krr_settings else dict(KRR_SETTINGS)
     keep, geometry = args.keep_no_boundary, (False if args.no_geometry else args.labels)
-    chosen = [] if args.no_descriptors else [v for v in ds.variants(args.only) if v.name != "reference"]
-    missing = sorted({v.tag for v in chosen + ds.variants(["reference"])
-                      if not (sc.run_dir("both_interfaces", v.tag) / sc.INTERFACE_FILE).is_file()})
+    reference = ds.variants(["reference"], args.descriptor_type)[0]
+    chosen = [] if args.no_descriptors else [v for v in ds.variants(args.only, args.descriptor_type)
+                                             if v.name != "reference"]
+    missing = sorted({v.tag for v in chosen + [reference] if not v.vector_file().is_file()})
     if missing:
-        raise SystemExit(f"SOAP runs missing: {missing}; run descriptor_grid.py first")
+        raise SystemExit(f"descriptor runs missing: {missing}; run descriptor_grid.py first")
     sizes = sorted(set(args.sizes))
-    _, table, _ = load_pool(ds.variants(["reference"])[0], keep, geometry)
-    splits = test_splits(len(table), args.splits)
-    with ds.worker_pool(args.jobs) as pool:
-        maps_job = pool.submit(maps_task, keep)
-        descriptor_jobs = [pool.submit(variant_task, v, splits, sizes, args.draws, keep, geometry) for v in chosen]
-        maps = maps_job.result()
-        print(f"[{time.time() - started:6.0f} s] maps fitted", flush=True)
-        existing_job = pool.submit(existing_task, maps, args.draws, 30, keep, geometry)
-        split_jobs = [pool.submit(reference_split_task, k, p, t, maps, sizes, args.draws, keep, geometry)
-                      for k, (p, t) in enumerate(splits)]
-        reference_results = [job.result() for job in split_jobs]
-        print(f"[{time.time() - started:6.0f} s] {len(split_jobs)} reference splits", flush=True)
-        existing_rows, picked, existing_seconds = existing_job.result()
-        descriptor_results = [job.result() for job in descriptor_jobs]
-        print(f"[{time.time() - started:6.0f} s] {len(descriptor_jobs)} descriptor settings", flush=True)
+    # As in descriptor_sensitivity.py: each vector source is read once into a node-local cache.
+    cache = Path(ds.tempfile.mkdtemp(prefix="selection_benchmark_", dir=os.environ.get("TMPDIR")))
+    os.environ[ds.CACHE_ENV] = str(cache)
+    try:
+        with ds.worker_pool(args.jobs) as pool:
+            sources = {}
+            for v in [reference] + chosen:
+                sources.setdefault(ds.cache_key(v), v)
+            for job in [pool.submit(ds.warm_task, v) for v in sources.values()]:
+                job.result()
+            print(f"[{time.time() - started:6.0f} s] {len(sources)} vector sources cached", flush=True)
+            _, table, _ = load_pool(reference, keep, geometry)
+            splits = test_splits(len(table), args.splits)
+            maps_job = pool.submit(maps_task, keep, reference)
+            descriptor_jobs = [pool.submit(variant_task, v, splits, sizes, args.draws, keep, geometry, krr_settings)
+                               for v in chosen]
+            maps = maps_job.result()
+            print(f"[{time.time() - started:6.0f} s] maps fitted", flush=True)
+            existing_job = pool.submit(existing_task, maps, args.draws, 30, keep, geometry, reference, krr_settings,
+                                       args.existing_dir)
+            split_jobs = [pool.submit(reference_split_task, k, p, t, maps, sizes, args.draws, keep, geometry, reference,
+                                      krr_settings)
+                          for k, (p, t) in enumerate(splits)]
+            reference_results = [job.result() for job in split_jobs]
+            print(f"[{time.time() - started:6.0f} s] {len(split_jobs)} reference splits", flush=True)
+            existing_rows, picked, existing_seconds, outside = existing_job.result()
+            descriptor_results = [job.result() for job in descriptor_jobs]
+            print(f"[{time.time() - started:6.0f} s] {len(descriptor_jobs)} descriptor settings", flush=True)
+    finally:
+        ds.shutil.rmtree(cache, ignore_errors=True)
+        os.environ.pop(ds.CACHE_ENV, None)
 
     curves = pd.DataFrame([row for result in reference_results for row in result[0]]
                           + [row for result in descriptor_results for row in result[0]])
@@ -717,9 +810,14 @@ def main():
                            & (summary["n"] == 30)][["strategy", "label", "model", "r2_mean", "r2_std"]]
                    .to_dict("records"))
     mc.write_json(out / "summary.json", {
+        "descriptor_type": args.descriptor_type, "reference": ds.variant_record(reference),
         "pool": f"{len(table):,} distinct GBs at 8x", "no_boundary_dropped": not keep,
         "test_sets": {"n": args.splits, "size": N_TEST, "seed": 0},
-        "sizes": sizes, "draws_of_random_strategies": args.draws, "krr_settings": KRR_SETTINGS,
+        "sizes": sizes, "draws_of_random_strategies": args.draws, "krr_settings": krr_settings,
+        "krr_settings_from": (sc.relative_path(args.krr_settings) if args.krr_settings
+                              else "standard-SOAP Stage 1 choices (KRR_SETTINGS)"),
+        "existing_lists_from": sc.relative_path(args.existing_dir),
+        **({"existing_list_members_outside_pool": outside} if outside else {}),
         "regression": None if not geometry else {"labels": list(GEOMETRY), "file": sc.relative_path(args.labels), "region": "cell",
                                                  "krr": "settings by leave-one-out on the picks",
                                                  "grid": {"scale": REGRESSION_SCALES, "gamma": REGRESSION_GAMMAS,

@@ -12,7 +12,7 @@ Rerun on another descriptor with --descriptor <tag or folder>; compare two
 runs with compare_duplicates.py. --descriptor-type ace uses the ACE vectors
 (src/ACE/CoGe) instead of SOAP, and writes into calculations/ML_ACE/CoGe/.
 
-Outputs, in calculations/ML_dscribe/CoGe/<descriptor tag>/<vector tag>/:
+Outputs, in calculations/ML_dscribe/CoGe/standard/<descriptor tag>/<vector tag>/:
   distinct_gbs.csv         every family with its distinct-GB number
   duplicate_groups.csv     one row per coinciding group
   duplicate_members.csv    one row per family in a coinciding group

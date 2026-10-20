@@ -43,7 +43,7 @@ OUTCAR = """\
    NELECT =     832.0000    total number of electrons
    ISTART =      0    job   : 0-new  1-cont  2-samecut
    ICHARG =      2    charge: 1-file 2-atom 10-const
-   ISPIN  =      2    spin polarized calculation?
+   ISPIN  =      1    spin polarized calculation?
    LSORBIT =      F    spin-orbit coupling
    ENCUT  =  500.0 eV  36.75 Ry    6.06 a.u.
    NELM   =    100;   NELMIN=  2; NELMDL= -5     # of ELM steps
@@ -76,7 +76,7 @@ OSZICAR = """\
 DAV:   1     0.105600000000E+04    0.10560E+04   -0.81000E+04 25600   0.123E+03
 DAV:  30    -0.812345678800E+03   -0.20000E-05   -0.30000E-07 25600   0.200E-03   0.100E-03
 DAV:  31    -0.812345678900E+03   -0.50000E-06   -0.10000E-07 25600   0.100E-03
-   1 F= -.81234568E+03 E0= -.81232284E+03  d E =-.456789E-01  mag=     0.0012
+   1 F= -.81234568E+03 E0= -.81232284E+03  d E =-.456789E-01
 """
 VASP_OUT = """\
  running   16 mpi-ranks, with    1 threads/rank, on    1 nodes
@@ -215,13 +215,13 @@ class Validate(Tree):
         self.assertEqual((rec["nions"], rec["nelect"], rec["mesh"], rec["nkpts"], rec["nbands"], rec["scf_steps"]),
                          (128, 832.0, [1, 9, 9], 25, 512, 31))
         self.assertEqual((rec["encut_eV"], rec["ismear"], rec["sigma_eV"], rec["ediff_eV"]), (500.0, 1, 0.05, 1e-6))
-        self.assertEqual(rec["mixing"], {"AMIX": 0.2, "AMIX_MAG": 0.8, "AMIN": 0.01})
+        self.assertEqual(rec["mixing"], {"AMIX": 0.2, "AMIX_MAG": 0.8, "AMIN": 0.01, "BMIX": 1.0, "BMIX_MAG": 1.0})
         self.assertAlmostEqual(rec["toten_eV"], -812.34567890)
         self.assertAlmostEqual(rec["toten_eV_atom"], -812.34567890 / 128)
         self.assertAlmostEqual(rec["e0_eV"], -812.32283945)
         self.assertAlmostEqual(rec["eentro_eV"], -0.04567890)
         self.assertAlmostEqual(rec["efermi_eV"], 8.1234)
-        self.assertAlmostEqual(rec["magnetization_muB"], 0.0012)
+        self.assertNotIn("magnetization_muB", rec)  # ISPIN 1 (v0.3.0): no moment to record
         self.assertEqual((rec["nplwv"], rec["elapsed_s"], rec["rank0_max_memory_kb"]), (1036800, 9000.123, 4152280.0))
         self.assertEqual((rec["peak_rss_bytes"], rec["max_ranks_seen"]), (50 * 1024**3, 16))
         self.assertEqual([w["title"] for w in rec["warnings"]], ["ADVICE to this user running VASP"])
@@ -243,7 +243,7 @@ class Validate(Tree):
             "OUTCAR ICHARG": {"OUTCAR": [("ICHARG =      2", "ICHARG =      1")]},
             "OUTCAR LCHARG": {"OUTCAR": [("LCHARG       =      F", "LCHARG       =      T")]},
             "OUTCAR AMIX 0.4": {"OUTCAR": [("AMIX     =   0.20", "AMIX     =   0.40")]},
-            "OUTCAR AMIX_MAG 1.6": {"OUTCAR": [("AMIX_MAG =   0.80", "AMIX_MAG =   1.60")]},
+            "OUTCAR ISPIN 2": {"OUTCAR": [("ISPIN  =      1", "ISPIN  =      2")]},
             "OUTCAR AMIN 0.1": {"OUTCAR": [("AMIN     =   0.01", "AMIN     =   0.10")]},
             "not vasp.6.4.3": {"OUTCAR": [("vasp.6.4.3", "vasp.6.2.0")]},
             "vasprun.xml incomplete": {"vasprun.xml": [("</modeling>", "")]},
@@ -322,6 +322,56 @@ class Finish(Tree):
         self.assertTrue(self.scratch.exists())
 
 
+class MomentCheck(Tree):
+    """The moment-check folder of the same cell: ISPIN 2, linear moment mixing, LORBIT 11."""
+
+    def setUp(self):
+        super().setUp()
+        counts, problems, _, _ = mvi.generate(FAMILY, "moment-check", [SYM], "8x", None, False, "abc1234", self.root)
+        assert counts["written"] == 1 and not problems, (counts, problems)
+        self.records = self.root / "results/CoGe_interface/100/moment_check_8x"
+        self.check = self.root / f"calculations/CoGe_interface/100/{SYM}/8x/moment-check/e500_k1x9x9"
+        self.scratch = vasp_task.prepare(self.check, self.records, ENV, self.scratch_base)
+        self.prepared = json.loads((self.scratch / "prepare.json").read_text())
+
+    def spin_run(self, **replace):
+        """A finished spin-polarized run (as the 10-13 linmag trial printed it); replace breaks it."""
+        pairs = {"OUTCAR": [("ISPIN  =      1", "ISPIN  =      2"), ("BMIX_MAG =  1.00", "BMIX_MAG =  0.00")],
+                 "OSZICAR": [("d E =-.456789E-01", "d E =-.456789E-01  mag=     1.8140")]}
+        for name, extra in replace.items():
+            pairs[name] = pairs.get(name, []) + extra
+        fake_run(self.scratch, **pairs)
+        (self.scratch / "PROCAR").write_text("synthetic\n")
+
+    def test_identify(self):
+        info = vasp_task.identify(self.check)
+        self.assertEqual((info["stage"], info["sym"], info["point"]), ("moment-check", SYM, "e500_k1x9x9"))
+
+    def test_good_run_records_the_moment(self):
+        self.spin_run()
+        rec = vasp_task.validate(self.scratch, self.prepared, 0)
+        self.assertEqual(rec["magnetization_muB"], 1.814)
+        self.assertEqual((rec["mixing"]["AMIX_MAG"], rec["mixing"]["BMIX_MAG"]), (0.8, 0.0))
+
+    def test_unapplied_spin_settings_fail(self):
+        cases = {"OUTCAR BMIX_MAG 1.0": {"OUTCAR": [("BMIX_MAG =  0.00", "BMIX_MAG =  1.00")]},
+                 "OUTCAR ISPIN 1": {"OUTCAR": [("ISPIN  =      2", "ISPIN  =      1")]}}
+        for message, replace in cases.items():
+            with self.subTest(message=message):
+                self.spin_run(**replace)
+                with self.assertRaisesRegex(vasp_task.TaskError, message):
+                    vasp_task.validate(self.scratch, self.prepared, 0)
+
+    def test_finish_exports_procar_into_its_own_folder(self):
+        self.spin_run()
+        with contextlib.redirect_stdout(io.StringIO()) as out:
+            status = vasp_task.finish(self.check, self.scratch, 0, self.records)
+        self.assertEqual(status, 0, out.getvalue())
+        self.assertIn("PROCAR", os.listdir(self.check))
+        self.assertEqual(set(os.listdir(self.folder())), set(mvi.INPUTS))  # the sweep point is untouched
+        self.assertEqual(json.loads((self.check / "result.json").read_text())["stage"], "moment-check")
+
+
 class Parsing(unittest.TestCase):
 
     def test_job_rss_sums_only_this_jobs_vasp_ranks(self):
@@ -374,7 +424,25 @@ class Submit(Tree):
         text = out.getvalue()
         self.assertIn("2 pending folder(s), 16 ranks each", text)
         self.assertIn("--array=0-1%8 --mem=64G --ntasks=16 --ntasks-per-node=16", text)
+        self.assertIn("--nodelist=qcg3-0", text)  # GB VASP runs stay on qcg3-0 unless asked otherwise
         self.assertFalse((self.records / "submissions").exists())
+
+    def test_heaviest_first(self):
+        points = list(mvi.recipe(FAMILY, STAGE)["points"])
+        order = [Path(rel).name for rel in submit_vasp.heaviest_first([self.rel(p) for p in points])]
+        self.assertEqual(order, ["e500_k1x11x11", "e600_k1x9x9", "e500_k1x9x9", "e450_k1x9x9", "e400_k1x9x9",
+                                 "e500_k1x7x7", "e350_k1x9x9", "e500_k1x5x5", "e500_k1x3x3"])
+        # 49 x 500^1.5 = 5.48e5 > 81 x 350^1.5 = 5.30e5
+
+    def test_dry_run_order(self):
+        tasks = self.records / "tasks.txt"
+        tasks.parent.mkdir(parents=True)
+        tasks.write_text("".join(self.rel(p) + "\n" for p in ("e500_k1x3x3", "e500_k1x11x11")))
+        for order, first in (("cost", "e500_k1x11x11"), ("list", "e500_k1x3x3")):
+            with contextlib.redirect_stdout(io.StringIO()) as out:
+                submit_vasp.main(["--tasks", str(tasks), "--order", order, "--dry-run"])
+            listed = [line.strip() for line in out.getvalue().splitlines() if line.startswith("  calculations/")]
+            self.assertTrue(listed[0].endswith(first), (order, listed))
 
 
 if __name__ == "__main__":

@@ -26,6 +26,13 @@ enantiomers apart; SOAP cannot.
 | `gb/check_gb.py` | 1.3 | Checks on the GB output (thickness consistency, edge vs mid, close contacts, missing species, handedness report) |
 | `run_ace.slurm` | – | Runs the four scripts in order on a compute node |
 | `test_ace_common.py` | – | Unit tests: rotation, inversion, chunking, ν2 = featomic λ-SOAP, tags, round trip, scaling |
+| `covariant/covariant_ace.py` | – | Covariant ACE (λ = 1, 2 blocks of ν1–ν3): `CovariantCalculator`, streaming averages, loaders `load_rows` / `bulk_averages` (pristine-atom scaling) |
+| `covariant/covariant_descriptor.py` | 1.1, 1.3 | Covariant ACE for the bulk cells and a list of GB structures (`--structures`) |
+| `covariant/check_covariant.py` | 1.2, 1.3 | Rotation, inversion, bulk averages ≈ 0, thickness consistency, coinciding copies |
+| `covariant/test_covariant_ace.py` | – | Unit tests: rotation, inversion, chunking, ν2 = featomic λ-SOAP, averages, B20 bulk averages vanish, round trip |
+| `ace_grid.py` | – | The ACE runs of the descriptor screens (27 one-knob settings at 8x, the reference at radii 6/8/10, covariant ACE), `--parallel` tasks at a time, with skip-if-done |
+| `run_ace_grid.slurm` | – | `ace_grid.py` as one qcg0 job |
+| `run_ace_screens.slurm` | – | The descriptor screens on the grid: `descriptor_sensitivity.py`, `selection_benchmark.py`, `plot_descriptor_study.py` with `--descriptor-type ace`, as one qcg0 job |
 
 Do not add an `__init__.py` anywhere under `src/ACE/` (as for `src/dscribe/`).
 `ace_common.py` imports the SOAP step scripts by file path under other module names
@@ -33,15 +40,16 @@ Do not add an `__init__.py` anywhere under `src/ACE/` (as for `src/dscribe/`).
 
 ## Running
 
-Full run (user-submitted; about 13 CPU-h, about 15 min on the default 64 cores):
+Full run (about 13 CPU-h; job 12969 took 33 min on qcg0 with 96 workers, 13 of them spent on the worker
+start that is now fixed, see Known points):
 
 ```bash
 sbatch src/ACE/CoGe/run_ace.slurm
 ```
 
 Other settings are passed through the environment (`R_CUT`, `N_MAX`, `L_MAX`, `SIGMA`, `SMOOTHING`,
-`DENSITY`, `NU_MAX`, `N3`, `L3`, `RADII`, `OVERWRITE=1`), e.g.
-`N3=6 L3=4 sbatch src/ACE/CoGe/run_ace.slurm` or `DENSITY=dirac sbatch src/ACE/CoGe/run_ace.slurm`.
+`NU_MAX`, `N3`, `L3`, `WEIGHTING`, `RADII`, `OVERWRITE=1`), e.g.
+`N3=6 L3=4 sbatch src/ACE/CoGe/run_ace.slurm` or `R_CUT=8 WEIGHTING=pow sbatch src/ACE/CoGe/run_ace.slurm`.
 
 By hand, from the project root, in a compute-node shell (not on the login node, see `CLAUDE.md`):
 
@@ -70,7 +78,8 @@ does not change the numbers (tested). Skipped structures go to `skipped.csv`; on
 | `--r-cut` | 6.0 Å | as SOAP |
 | `--n-max`, `--l-max` | 8, 6 | radial and angular size of the expansion behind ν1 and ν2 (as SOAP) |
 | `--sigma` | 0.5 Å | Gaussian width of each atom, as SOAP |
-| `--density` | gaussian | `dirac` gives textbook ACE (point atoms, no smearing; the tag then reads `_dirac`) |
+| `--density` | gaussian | `dirac` (textbook ACE, point atoms) is refused: featomic 0.6.7 cannot expand a Dirac density on the GTO basis, neither built in nor with its spline (NaN derivatives; found 2026-10-13, no run ever used it) |
+| `--weighting` | none | `pow`: neighbour density weighted by w(r) = 1 / (1 + (r / r0)^m), `--weighting-r0` 3 Å, `--weighting-m` 4; featomic's Willatt2018 scaling, the same function as the SOAP study's DScribe `pow` (c = d = 1); tag suffix `_wpow-r3-c1-d1-m4`. DScribe's `poly` has no featomic counterpart |
 | `--smoothing` | 0.5 Å | shifted-cosine cutoff smoothing (as the covariant run); other values add `_sm<w>` to the tag |
 | `--nu-max` | 3 | 2 stops at the SOAP power spectrum (blocks ν1, ν2 only) |
 | `--n3`, `--l3` | 4, 4 | a smaller expansion for ν3: the number of 4-body terms grows as n³·l³ |
@@ -149,7 +158,125 @@ per plane), 54 GB structures (first 2 sym folders per plane, all thicknesses, 20
   (half of the cell is each enantiomer).
 - Cost: 13 s for 20,736 atoms on 16 workers, about 10 CPU-ms per atom; peak memory 0.47 GB per process.
 
+## Full run (2026-10-13, job 12969)
+
+Default settings, the whole catalogue; outputs and numbers in `calculations/descriptors/ACE/README.md`.
+Step 1.2 passes on all 1,545 bulk cells, and the odd-block sign matches the handedness label on all 1,541
+transformed cells. The step 1.3 checks pass (thickness consistency <= 6.9e-5 in every block).
+
+## Covariant ACE (`covariant/`, for the representation study)
+
+The λ ≥ 1 companions of the invariant blocks, from the same two expansions (featomic `DensityCorrelations`
+with selected keys λ = 1, 2): `nu1_{polar,tensor}`, `nu2_{polar,axial,tensor,pseudotensor}` and
+`nu3_{polar,axial,tensor,pseudotensor}`. polar = λ 1 σ +1 (a vector, flips under inversion), axial = λ 1 σ −1
+(a vector unchanged by inversion, like a spin), tensor = λ 2 σ +1, pseudotensor = λ 2 σ −1; under inversion a
+block picks up σ(−1)^λ. ν1 has only σ = +1. They are the ACE counterpart of covariant SOAP
+(`src/dscribe/CoGe/covariant/`): `nu2_*` equal featomic's λ-SOAP blocks (test `test_nu2_is_the_covariant_soap`).
+λ = 1 components are stored as x, y, z, λ = 2 as m = −2 … 2.
+
+Averaging as for the invariant blocks, `[Co mean | Ge mean]` per component. The atoms go through featomic
+`--chunk` at a time and only running sums are kept. One vector holds 569,600 entries at the default
+n3 = l3 = 4 (2.3 MB in float32), so the whole catalogue would take about 95 GB; `--structures` takes a CSV of
+`family, thickness` pairs instead. The cell average of every λ ≥ 1 block vanishes in bulk (point group 23), so
+the loaders scale each block by the mean length of one pristine atom's block vector (`atom_norm_<block>` of
+the pristine row of `bulk_index.csv`).
+
+```bash
+python -B src/ACE/CoGe/covariant/covariant_descriptor.py --structures <list.csv> --workers 88
+python -B src/ACE/CoGe/covariant/check_covariant.py --run-dir rc6.0_n8_l6_s0.5_nu3-n4-l4_lam1-2
+python -B -m unittest discover -s src/ACE/CoGe/covariant -p 'test_*.py'
+```
+
+Smoke test (2026-10-13, qcg0, 6 workers; `archive/ace_20261013/smoke/covariant/`): 7 bulk cells and 6 GB
+cells. Rotation errors ≤ 7e-14 and inversion errors ≤ 1e-14 on a 4x cell of each plane; bulk averages ≤ 1e-6
+of one atom's vector in every block; thickness consistency ≤ 1.8e-3. Cost: about 18 CPU-ms per atom (the
+invariant blocks: about 3 at the same settings), and about 1 GB per worker at the start.
+
+**Worker memory grows: featomic leaks.** `DensityCorrelations.compute` (featomic 0.6.7) leaves the arrays it
+hands to metatensor registered in `metatensor._data._array._KNOWN_ARRAY_WRAPPERS` after every call, and `gc`
+does not free them (measured on qcg2-2, 2026-10-13: about 3,100 arrays and 60-160 MB per 8x structure for
+the covariant blocks; about 1,400 small arrays per structure for the invariant blocks, whose workers reach
+only 1.3-1.6 GB over an 8x run). In job 13012 the 13 covariant workers had grown to 24 GB each after about
+150 structures (about 345 GB in all against the job's 160 GB; Slurm does not enforce `--mem` on this
+cluster), so I stopped that step at 2,000 of 3,940 structures. `covariant_descriptor.py` now replaces each
+worker after `--max-tasks-per-worker` GB structures (default 30, so at most about 5 GB per worker); the
+bulk cells run first in a pool of their own that keeps its workers. Each replacement costs one start-up
+(about 60 s). Replaced workers give bit-identical arrays (test of 2026-10-13, 38 structures and 10 bulk cells,
+recycling every 2 and every 10 against never: `archive/ace_20261013/smoke/recycle/`).
+
+## Settings grid (`ace_grid.py`, for the descriptor screens)
+
+The ACE counterpart of the descriptor runs of `src/ML_dscribe_scripts/descriptor_grid.py`. One knob at a time
+away from the reference `rc6.0_n8_l6_s0.5_nu3-n4-l4` (job 12969, all thicknesses): r_cut 4/5/8/10/12,
+n_max 4/6/10/12, l_max 2/4/8/10 (ν1, ν2 expansion), σ 0.3/0.75/1.0, n3 2/3/5/6 and l3 2/3/5/6 (ν3 expansion),
+pow weighting at r_cut 6, 8, 12. These runs cover the 1,541 8x structures only, named `<tag>_t8` (the screens
+read the 1,112 distinct GBs at 8x; the thickness screen uses the full reference run). Further tasks:
+- `region radii`: the reference setting at 8x with interface radii 6, 8 and 10 Å (`<tag>_t8`), for the
+  region r6 and r10 vectors.
+- `covariant`: covariant ACE at the reference setting on every GB at 8x plus the 300 GBs of the
+  representation study's thickness check at all 9 thicknesses
+  (`calculations/descriptors/ACE/covariant/structure_lists/t8-thick300.csv`, made with
+  `representation_study.gb_table` and the same random draw, seed 11). Name `rc6.0_n8_l6_s0.5_nu3-n4-l4_lam1-2`.
+
+Each setting gets bulk ACE, the bulk invariance check and GB ACE. Finished runs are skipped, the checks
+always rerun, and a failed check does not stop the job (it exits 1 and lists it). Logs:
+`calculations/descriptors/ACE/logs/grid/<task>.log` and `status.tsv` there.
+
+`--parallel K` (Slurm: `PARALLEL`, default 3) runs K tasks at once with `--workers / K` workers each, the
+covariant task first. Every step is a new Python process that imports numpy, featomic and metatensor
+(about 840 modules) over NFS. On 2026-10-13, with qcg0 busy (four jobs reading and writing large files),
+`python -X importtime` there showed about 0.2 s per module whatever its size (numpy about 20 s, the whole
+stack about 60 s per process); on idle qcg2-2 a cold import took 43 s and a repeat 1 s. So on a busy node a
+step spends minutes starting up (smoke steps on a few structures: 150-370 s; the full job's bulk steps,
+about 12 s of compute: 505 s). With K > 1 that start-up overlaps the other tasks' compute. A node-local copy
+of the venv does not help: copying its files pays the same per-file latency (`cp -a` moved 77 of 399 MB in
+15 min).
+
+```bash
+python -B src/ACE/CoGe/ace_grid.py --dry-run          # tasks, state, commands
+sbatch src/ACE/CoGe/run_ace_grid.slurm                 # all tasks; ONLY='covariant "n3 6"' for a subset
+sbatch --cpus-per-task=40 --mem=160G src/ACE/CoGe/run_ace_grid.slurm   # when qcg0 is shared
+```
+
+Smoke test (2026-10-13, qcg0, `--limit 1`, `archive/ace_20261013/smoke/grid/`): every step runs. The bulk
+check of n3 = 2 fails on the 111 cells by rounding: `ref_111` (pristine, only turned) differs from pristine by
+1.4e-6 in `nu3_odd` (tolerance 1e-6); the 111 POSCARs have four-decimal coordinates (within-species spread
+1.2e-4), and the smaller ν3 basis makes the odd block small enough for that noise to show. Such failures are
+reported, not hidden by a looser tolerance.
+
+`l3 = 2` fails its bulk check on every plane for a different reason: there the pristine `nu3_odd` block is
+zero (length 3e-19; the rounded 111 cells 7e-9). Every B20 atom sits on a 3-fold axis, and up to l = 2 the
+only C3-invariant harmonics are the m = 0 ones about that axis, so the density seen through l <= 2 is
+axially symmetric and no inversion-odd invariant survives in bulk. In an `l3 = 2` GB vector the odd block
+comes only from interface atoms, whose site symmetry is broken. The check's relative differences are then
+over a zero vector and meaningless, and `ace_common.assemble` refuses to divide a block by a pristine length
+below `VANISHING_NORM` (1e-6): such a run is loaded without `nu3_odd` (`--ace-blocks`) or unscaled.
+
+## Descriptor screens (`run_ace_screens.slurm`)
+
+The SOAP screens for ACE: `descriptor_sensitivity.py`, `selection_benchmark.py` and `plot_descriptor_study.py`
+from `src/ML_dscribe_scripts/` with `--descriptor-type ace` (settings and figures in that folder's README).
+They read the grid runs above, the reference run, the ACE KRR run with census folds
+(`calculations/ML_ACE/CoGe/rc6.0_n8_l6_s0.5_nu3-n4-l4/interface_r8_both_t4_no_boundary`, for the benchmark's
+KRR settings) and the ACE FPS/median lists in `plots/CoGe/dim-reduction/ACE/`. Not made for ACE:
+`plane100_dmin1.8`, the settings grid and `vector_sizes` (user, 2026-10-13); `representation_response` needs
+covariant ACE and waits for it.
+
+```bash
+sbatch --dependency=afterany:<grid job> src/ACE/CoGe/run_ace_screens.slurm   # 40 cores, after the grid
+sbatch --cpus-per-task=96 --mem=400G src/ACE/CoGe/run_ace_screens.slurm     # whole qcg0 when it is free
+```
+
+Smoke test (2026-10-13, qcg2-2, `archive/ace_20261013/smoke/screens/`): 9 settings with 2 seeds, the benchmark
+with 2 test sets and 2 draws, then every ACE section with the title prefix "SMOKE TEST".
+
 ## Known points
+
+- `gb_descriptor.py` hands the expected property labels to its workers through a temporary file. Job 12969
+  still passed them directly; at about 0.4 MB they overfilled the pipe that starts each spawned worker, so
+  the main process started the 96 workers one at a time, each after its imports (about 8 s, 13 min in
+  all). With the file the workers start together; the arrays of the 54-structure smoke test are
+  bit-identical before and after the change.
 
 - The odd block of a GB whose grains are mirror images can vanish by symmetry (e.g. `100/sym00000`, the
   inversion). `check_gb.py` therefore divides differences by the pristine block length, not by the

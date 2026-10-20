@@ -14,7 +14,13 @@ Registered recipes
                                     ENCUT 350-600 eV at Gamma 1x9x9 and 1xNxN
                                     (N = 3..11) at 500 eV, static, ISMEAR 1,
                                     damped density mixing for the 74 A cell
-                                    (AMIN 0.01, AMIX 0.2, AMIX_MAG 0.8; v0.2.0).
+                                    (AMIN 0.01, AMIX 0.2; v0.2.0), non-magnetic
+                                    (ISPIN 1, no MAGMOM; v0.3.0).
+  CoGe_100_GB / moment-check        the sweep's e500_k1x9x9 point spin-polarized:
+                                    ISPIN 2 from Co 1 muB, the `linmag` mixing of
+                                    the 2026-10-13 trials (AMIX_MAG 0.8,
+                                    BMIX_MAG 0.0001) and LORBIT 11 for per-atom
+                                    moments; its own folder, moment-check/.
 
 Each stage folder gets INCAR (line 1 is the version stamp), KPOINTS, a POSCAR
 copy and an absolute POTCAR symlink. A folder holding any VASP output is
@@ -35,7 +41,7 @@ import re
 import subprocess
 import sys
 
-VERSION = "0.2.0"
+VERSION = "0.3.0"
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
 CODE_DIR = Path(__file__).resolve().parent
 INTERFACE = PROJECT_ROOT / "calculations/CoGe_interface"
@@ -125,6 +131,8 @@ RECIPES = {
             "ISMEAR": "1",            # Methfessel-Paxton, SIGMA 0.05 kept
             "LCHARG": ".FALSE.",      # sweep runs seed nothing
             "ICHARG": "2",            # atomic densities (bulk 1 read a CHGCAR)
+            "ISPIN": "1",             # v0.3.0: zero moment (user, 2026-10-15); same answer as ISPIN 2 with
+                                      # MAGMOM 0 at half the work, and no run can drift into a moment
             "KPAR": "{kpar}",
             "NCORE": "4",
         },
@@ -132,12 +140,13 @@ RECIPES = {
             "NBANDS": ("NCORE", "512"),  # same band count at every point
             # v0.2.0: v0.1.0 sloshed (sym00177 e500_k1x3x3, 100 steps, E -753..-775 eV). VASP's
             # advice for a lattice vector > 50 A is AMIN 0.01; AMIX and AMIX_MAG are half the
-            # defaults (0.4, 1.6). BMIX/BMIX_MAG stay 1.0 (Kerker). The path changes, not the answer.
+            # defaults (0.4, 1.6). BMIX stays 1.0 (Kerker). The path changes, not the answer.
+            # v0.3.0: AMIX_MAG dropped with the spin (ISPIN 1). This charge mixing converged
+            # sym00177 and sym00190 non-magnetic in 31 and 35 steps (trials 12960, 2026-10-13).
             "AMIX": ("NELM", "0.2"),
-            "AMIX_MAG": ("AMIX", "0.8"),
-            "AMIN": ("AMIX_MAG", "0.01"),
+            "AMIN": ("AMIX", "0.01"),
         },
-        "drop": ("LORBIT",),         # energies only; no PROCAR or projections
+        "drop": ("LORBIT", "MAGMOM"),  # energies only, no PROCAR; no moment (v0.3.0)
         "kpoints_comment": "CoGe [100] GB Gamma mesh",
         "points": sweep_points(GB_ENCUT_SWEEP, GB_K_SWEEP),
         "counts": (64, 64),
@@ -145,6 +154,31 @@ RECIPES = {
         "binary": "vasp_std",
         "poscar": "calculations/CoGe_interface/100/{sym}/{thickness}/POSCAR",
         "target": "calculations/CoGe_interface/100/{sym}/{thickness}/convergence/{point}",
+        "potcar": "calculations/CoGe_interface/POTCAR",
+        "catalogue": "structures/CoGeGrainBoundaries/CoGe_100_GBs/Interface/{sym}/{thickness}/POSCAR",
+        "writable": True,
+    },
+    ("CoGe_100_GB", "moment-check"): {
+        # Does the small moment of the 10-13 trials (1x3x3: 1.8 / 1.6 muB, 26 / 44 meV per cell below
+        # zero moment) survive at 1x9x9, and on which atoms? The sweep's e500_k1x9x9 point spin-polarized
+        # with the trial `linmag` mixing, plus LORBIT (user, 2026-10-15). E0 is compared with the
+        # sweep's ISPIN 1 run of the same point.
+        "base": ("CoGe_100_GB", "convergence-nonsoc"),
+        "set": {"ISPIN": "2"},
+        "insert_after": {
+            "MAGMOM": ("ISPIN", "{magmom}"),     # Co 1 muB, Ge 0, as bulk and v0.2.0
+            "LORBIT": ("LCHARG", "11"),          # per-atom moments in OUTCAR; lm-resolved PROCAR, as bulk
+            "AMIX_MAG": ("AMIX", "0.8"),         # v0.2.0
+            "BMIX_MAG": ("AMIX_MAG", "0.0001"),  # trial linmag: linear mixing of the moment, no Kerker
+        },
+        "drop": (),
+        "kpoints_comment": "CoGe [100] GB Gamma mesh",
+        "points": {"e500_k1x9x9": (500, (1, 9, 9))},
+        "counts": (64, 64),
+        "profile": {"ranks": 16, "kpar": {"default": 4}, "ncore": 4},
+        "binary": "vasp_std",
+        "poscar": "calculations/CoGe_interface/100/{sym}/{thickness}/POSCAR",
+        "target": "calculations/CoGe_interface/100/{sym}/{thickness}/moment-check/{point}",
         "potcar": "calculations/CoGe_interface/POTCAR",
         "catalogue": "structures/CoGeGrainBoundaries/CoGe_100_GBs/Interface/{sym}/{thickness}/POSCAR",
         "writable": True,
